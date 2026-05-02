@@ -1,4 +1,5 @@
 import { type Agent, type AgentConfig, createAgent as defaultCreateAgent } from "../agents/index.ts"
+import { type DashboardHandle, startDashboard } from "../dashboard/index.ts"
 import { createEventBus, type EventBus, type SerfsEvent } from "../events/index.ts"
 import { createFlowRegistry, type FlowRegistry, startFlowScheduler } from "../flows/index.ts"
 import { createJobQueue, type JobQueue, runJob } from "../jobs/index.ts"
@@ -26,6 +27,7 @@ export function createSerfs(input: CreateSerfsArgs): Serfs {
 
   let stopFlows: (() => void)[] = []
   let pumpStopped = false
+  let dashboard: DashboardHandle | undefined
 
   return {
     async start() {
@@ -41,12 +43,26 @@ export function createSerfs(input: CreateSerfsArgs): Serfs {
         createAgent,
         isStopped: () => pumpStopped,
       })
+      if (config.dashboard.enabled) {
+        dashboard = startDashboard({
+          port: config.dashboard.port,
+          host: config.dashboard.host,
+          registry,
+          queue,
+          events,
+          stateDir: config.stateDir,
+        })
+      }
     },
 
     async stop() {
       pumpStopped = true
       for (const fn of stopFlows) fn()
       stopFlows = []
+      if (dashboard) {
+        await dashboard.stop()
+        dashboard = undefined
+      }
     },
 
     on(type, listener) {
