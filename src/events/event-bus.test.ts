@@ -1,9 +1,10 @@
-import { test, expect, mock } from "bun:test"
+import { expect, mock, test } from "bun:test"
+import type { SerfsEvent } from "./event.types.ts"
 import { createEventBus } from "./event-bus.ts"
 
 test("subscribes to a specific event type and receives matching emits", () => {
   const bus = createEventBus()
-  const handler = mock(() => {})
+  const handler = mock((_event: SerfsEvent) => {})
   bus.on("job.queued", handler)
 
   bus.emit({ type: "job.queued", flowId: "f", jobId: "j", at: 1 })
@@ -15,7 +16,7 @@ test("subscribes to a specific event type and receives matching emits", () => {
 
 test("subscribes with '*' and receives all events", () => {
   const bus = createEventBus()
-  const handler = mock(() => {})
+  const handler = mock((_event: SerfsEvent) => {})
   bus.on("*", handler)
 
   bus.emit({ type: "job.queued", flowId: "f", jobId: "j", at: 1 })
@@ -26,7 +27,7 @@ test("subscribes with '*' and receives all events", () => {
 
 test("returns unsubscribe function that removes the listener", () => {
   const bus = createEventBus()
-  const handler = mock(() => {})
+  const handler = mock((_event: SerfsEvent) => {})
   const off = bus.on("job.queued", handler)
 
   bus.emit({ type: "job.queued", flowId: "f", jobId: "j", at: 1 })
@@ -38,10 +39,10 @@ test("returns unsubscribe function that removes the listener", () => {
 
 test("a throwing listener does not stop other listeners", () => {
   const bus = createEventBus()
-  const bad = mock(() => {
+  const bad = mock((_event: SerfsEvent) => {
     throw new Error("boom")
   })
-  const good = mock(() => {})
+  const good = mock((_event: SerfsEvent) => {})
   bus.on("job.queued", bad)
   bus.on("job.queued", good)
 
