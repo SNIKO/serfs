@@ -38,11 +38,7 @@ export interface AgentStatsPatch {
   toolCalls?: number
 }
 
-export function applyAgentStats(
-  state: JobState,
-  step: StepState,
-  patch: AgentStatsPatch,
-): void {
+export function applyAgentStats(state: JobState, step: StepState, patch: AgentStatsPatch): void {
   step.agent ??= emptyAgentState()
 
   if (patch.provider !== undefined) step.agent.provider = patch.provider

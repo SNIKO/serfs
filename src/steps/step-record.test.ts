@@ -1,11 +1,6 @@
 import { expect, test } from "bun:test"
 import type { JobState, RunState, StepState } from "../jobs/job.types.ts"
-import {
-  appendStep,
-  applyAgentStats,
-  finalizeStep,
-  startStep,
-} from "./step-record.ts"
+import { appendStep, applyAgentStats, finalizeStep, startStep } from "./step-record.ts"
 
 function makeJobState(): JobState {
   return {
