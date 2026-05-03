@@ -1,4 +1,5 @@
 import type { z } from "zod"
+import type { McpServerConfig } from "../agents/index.ts"
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "stopped"
 
@@ -49,6 +50,7 @@ export interface AgentStepOptions<T> {
   model?: string
   schema?: z.ZodSchema<T>
   vars?: Record<string, string>
+  mcpServers?: Record<string, McpServerConfig>
 }
 
 export interface JobContext {

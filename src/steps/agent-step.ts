@@ -1,6 +1,6 @@
 import { join } from "node:path"
 import type { z } from "zod"
-import type { AgentEvent, Provider } from "../agents/index.ts"
+import type { AgentEvent, McpServerConfig, Provider } from "../agents/index.ts"
 import { createAgent } from "../agents/index.ts"
 import type { EventBus } from "../events/index.ts"
 import type { JobState, StepState } from "../jobs/job.types.ts"
@@ -13,7 +13,12 @@ export interface RunAgentStepArgs<T> {
   name: string
   template: string
   vars: Record<string, string>
-  options: { provider?: string; model?: string; schema?: z.ZodSchema<T> }
+  options: {
+    provider?: string
+    model?: string
+    schema?: z.ZodSchema<T>
+    mcpServers?: Record<string, McpServerConfig>
+  }
   state: JobState
   flowId: string
   jobId: string
@@ -99,7 +104,12 @@ async function executeAgent<T>(args: RunAgentStepArgs<T>, step: StepState): Prom
 
   applyAgentStats(args.state, step, { provider, model, logPath })
 
-  const agent = createAgent({ provider: provider as Provider, model, cwd: args.workspaceDir })
+  const agent = createAgent({
+    provider: provider as Provider,
+    model,
+    cwd: args.workspaceDir,
+    mcpServers: args.options.mcpServers,
+  })
   const handle = agent.run({
     messages: [{ role: "user", content: body }],
     abortSignal: args.signal,
