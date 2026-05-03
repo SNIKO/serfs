@@ -47,6 +47,7 @@ export interface AgentCallOptions<T> {
   provider?: string
   model?: string
   schema?: z.ZodSchema<T>
+  vars?: Record<string, string>
 }
 
 export interface JobContext {
@@ -58,9 +59,5 @@ export interface JobContext {
   state: JobState
 
   step(name: string, fn: () => Promise<void>): Promise<void>
-  agent<T = string>(
-    promptTemplate: string,
-    vars?: Record<string, string>,
-    options?: AgentCallOptions<T>,
-  ): Promise<T>
+  agent<T = string>(promptTemplate: string, options?: AgentCallOptions<T>): Promise<T>
 }

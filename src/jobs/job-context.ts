@@ -39,15 +39,11 @@ export function buildJobContext(args: BuildJobContextArgs): JobContext {
       })
     },
 
-    agent<T = string>(
-      template: string,
-      vars?: Record<string, string>,
-      options?: AgentCallOptions<T>,
-    ) {
+    agent<T = string>(template: string, options?: AgentCallOptions<T>) {
       return runAgentStep<T>({
         name: options?.name ?? "agent",
         template,
-        vars: vars ?? {},
+        vars: options?.vars ?? {},
         options: options ?? {},
         state: args.state,
         flowId: args.flowId,
