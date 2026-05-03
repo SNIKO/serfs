@@ -1,6 +1,6 @@
 import type { EventBus } from "../events/index.ts"
 import { runAgentStep, runCodeStep } from "../steps/index.ts"
-import type { AgentCallOptions, JobContext, JobState } from "./job.types.ts"
+import type { AgentStepOptions, JobContext, JobState } from "./job.types.ts"
 
 export interface BuildJobContextArgs {
   flowId: string
@@ -38,9 +38,9 @@ export function buildJobContext(args: BuildJobContextArgs): JobContext {
       })
     },
 
-    agent<T = string>(template: string, options?: AgentCallOptions<T>) {
+    agent<T = string>(template: string, options?: AgentStepOptions<T>) {
       return runAgentStep<T>({
-        name: options?.name ?? "agent",
+        name: options?.stepId ?? "agent",
         template,
         vars: options?.vars ?? {},
         options: options ?? {},

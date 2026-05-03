@@ -1,6 +1,6 @@
 export type {
-  AgentCallOptions,
   AgentState,
+  AgentStepOptions,
   JobContext,
   JobState,
   JobStatus,

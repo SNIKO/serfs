@@ -43,8 +43,8 @@ export interface JobState {
   runs: RunState[]
 }
 
-export interface AgentCallOptions<T> {
-  name?: string
+export interface AgentStepOptions<T> {
+  stepId?: string
   provider?: string
   model?: string
   schema?: z.ZodSchema<T>
@@ -60,5 +60,5 @@ export interface JobContext {
   state: JobState
 
   step(name: string, fn: () => Promise<void>): Promise<void>
-  agent<T = string>(promptTemplate: string, options?: AgentCallOptions<T>): Promise<T>
+  agent<T = string>(promptTemplate: string, options?: AgentStepOptions<T>): Promise<T>
 }

@@ -3,8 +3,8 @@
 export type { SerfsEvent, SerfsEventType } from "./events/index.ts"
 export type { Flow, FlowConfig } from "./flows/index.ts"
 export type {
-  AgentCallOptions,
   AgentState,
+  AgentStepOptions,
   JobContext,
   JobState,
   JobStatus,
