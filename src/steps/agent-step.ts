@@ -103,6 +103,7 @@ async function executeAgent<T>(args: RunAgentStepArgs<T>, step: StepState): Prom
   const handle = agent.run({
     messages: [{ role: "user", content: body }],
     abortSignal: args.signal,
+    outputSchema: args.options.schema,
   })
 
   try {
@@ -123,18 +124,12 @@ async function executeAgent<T>(args: RunAgentStepArgs<T>, step: StepState): Prom
       }
     }
 
-    const raw = await handle.output
-    return resolveOutput<T>(raw, args.options.schema)
+    const response = await handle.output
+    return response
   } finally {
     await log.close()
     await agent.close()
   }
-}
-
-function resolveOutput<T>(raw: string, schema: z.ZodSchema<T> | undefined): T {
-  if (!schema) return raw as unknown as T
-  const parsed = JSON.parse(raw) as unknown
-  return schema.parse(parsed)
 }
 
 function applyStatsEvent(

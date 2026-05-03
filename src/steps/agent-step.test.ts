@@ -39,7 +39,7 @@ function jobState(): JobState {
 
 interface FakeAgentArgs {
   events: AgentEvent[]
-  output: string
+  output: unknown
   provider?: string
   model?: string
 }
@@ -54,7 +54,7 @@ function makeFakeAgentFactory(args: FakeAgentArgs) {
         for (const e of args.events) queue.push(e)
         queue.close()
         const promise = Promise.resolve(args.output)
-        const handle = promise as RunHandle<string>
+        const handle = promise as RunHandle<unknown>
         handle[Symbol.asyncIterator] = () => queue[Symbol.asyncIterator]()
         handle.output = promise
         return handle
@@ -174,7 +174,7 @@ test("missing variable fails the step", async () => {
 test("schema validates output and returns typed result", async () => {
   const factory = makeFakeAgentFactory({
     events: [],
-    output: '{"approved": true}',
+    output: { approved: true },
   })
   activeFactory = factory
   const state = jobState()
