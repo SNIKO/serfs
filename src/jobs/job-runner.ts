@@ -38,8 +38,9 @@ export async function runJob<TPayload>(args: RunJobArgs<TPayload>): Promise<void
     events: args.events,
   })
 
-  const status = await executeRun(args, ctx)
+  const { status, error } = await executeRun(args, ctx)
   state.status = status
+  if (error !== undefined) state.error = error
   state.endedAt = Date.now()
   state.runs[state.runs.length - 1].endedAt = state.endedAt
   await saveState(dir, state)
@@ -51,6 +52,7 @@ export async function runJob<TPayload>(args: RunJobArgs<TPayload>): Promise<void
     runId,
     at: state.endedAt,
     status,
+    error,
   })
 }
 
@@ -74,11 +76,13 @@ async function initState<TPayload>(dir: string, args: RunJobArgs<TPayload>): Pro
 async function executeRun<TPayload>(
   args: RunJobArgs<TPayload>,
   ctx: JobContext,
-): Promise<JobStatus> {
+): Promise<{ status: JobStatus; error?: string }> {
   try {
     await args.run(args.payload, ctx)
-    return "done"
-  } catch {
-    return args.signal.aborted ? "stopped" : "failed"
+    return { status: "done" }
+  } catch (err) {
+    const status = args.signal.aborted ? "stopped" : "failed"
+    const error = err instanceof Error ? err.message : String(err)
+    return { status, error }
   }
 }

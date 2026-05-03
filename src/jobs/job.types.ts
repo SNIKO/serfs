@@ -35,6 +35,7 @@ export interface JobState {
   status: JobStatus
   startedAt: number
   endedAt?: number
+  error?: string
   totals: {
     tokens: { input: number; output: number }
     costUsd?: number
