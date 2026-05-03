@@ -32,6 +32,7 @@ export type {
   FileChangedEvent,
   FileChangeKind,
   McpServerConfig,
+  Message,
   MessageCompletedEvent,
   MessageDeltaEvent,
   Provider,
@@ -47,4 +48,3 @@ export type {
   ToolStartedEvent,
 } from "./agents/index.ts"
 export { type Agent, createAgent } from "./agents/index.ts"
-export type { Message } from "./types.ts"
