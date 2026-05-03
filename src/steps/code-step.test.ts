@@ -17,12 +17,12 @@ afterEach(async () => {
 
 function fixture(): JobState {
   return {
-    id: "j",
+    jobId: "j",
     flowId: "f",
     status: "running",
     startedAt: 0,
     totals: { tokens: { input: 0, output: 0 } },
-    runs: [{ id: 0, startedAt: 0, steps: [] }],
+    runs: [{ runId: 0, startedAt: 0, steps: [] }],
   }
 }
 

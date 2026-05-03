@@ -4,12 +4,12 @@ import { appendStep, applyAgentStats, finalizeStep, startStep } from "./step-rec
 
 function makeJobState(): JobState {
   return {
-    id: "j",
+    jobId: "j",
     flowId: "f",
     status: "running",
     startedAt: 0,
     totals: { tokens: { input: 0, output: 0 } },
-    runs: [{ id: 0, startedAt: 0, steps: [] } satisfies RunState],
+    runs: [{ runId: 0, startedAt: 0, steps: [] } satisfies RunState],
   }
 }
 

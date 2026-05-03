@@ -15,7 +15,7 @@ afterEach(async () => {
 })
 
 const sample: JobState = {
-  id: "INC-1",
+  jobId: "INC-1",
   flowId: "incidents",
   status: "running",
   startedAt: 1,

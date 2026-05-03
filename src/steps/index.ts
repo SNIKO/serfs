@@ -1,2 +1,2 @@
-export { type AgentFactory, runAgentStep } from "./agent-step.ts"
+export { runAgentStep } from "./agent-step.ts"
 export { runCodeStep } from "./code-step.ts"

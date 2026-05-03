@@ -23,14 +23,14 @@ export interface StepState {
 }
 
 export interface RunState {
-  id: number
+  runId: number
   startedAt: number
   endedAt?: number
   steps: StepState[]
 }
 
 export interface JobState {
-  id: string
+  jobId: string
   flowId: string
   status: JobStatus
   startedAt: number

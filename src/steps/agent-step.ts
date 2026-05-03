@@ -1,21 +1,13 @@
 import { join } from "node:path"
 import type { z } from "zod"
-import type { AgentConfig, AgentEvent, Provider, RunHandle, RunOptions } from "../agents/index.ts"
+import type { AgentEvent, Provider } from "../agents/index.ts"
+import { createAgent } from "../agents/index.ts"
 import type { EventBus } from "../events/index.ts"
 import type { JobState, StepState } from "../jobs/job.types.ts"
 import { createAgentLog } from "../logging/index.ts"
 import { parsePrompt, renderPrompt } from "../prompts/index.ts"
 import { agentLogPath, jobDir as buildJobDir, saveState } from "../state/index.ts"
 import { appendStep, applyAgentStats, finalizeStep, startStep } from "./step-record.ts"
-
-interface AgentLike {
-  provider: string
-  model: string
-  run(options: RunOptions): RunHandle<string>
-  close(): Promise<void>
-}
-
-export type AgentFactory = (config: AgentConfig) => AgentLike
 
 export interface RunAgentStepArgs<T> {
   name: string
@@ -30,7 +22,6 @@ export interface RunAgentStepArgs<T> {
   workspaceDir: string
   events: EventBus
   signal: AbortSignal
-  createAgent: AgentFactory
 }
 
 export async function runAgentStep<T = string>(args: RunAgentStepArgs<T>): Promise<T> {
@@ -108,7 +99,7 @@ async function executeAgent<T>(args: RunAgentStepArgs<T>, step: StepState): Prom
 
   applyAgentStats(args.state, step, { provider, model, logPath })
 
-  const agent = args.createAgent({ provider: provider as Provider, model, cwd: args.workspaceDir })
+  const agent = createAgent({ provider: provider as Provider, model, cwd: args.workspaceDir })
   const handle = agent.run({
     messages: [{ role: "user", content: body }],
     abortSignal: args.signal,

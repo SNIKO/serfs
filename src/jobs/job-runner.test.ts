@@ -2,10 +2,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { Agent, AgentEvent, RunHandle } from "../agents/index.ts"
 import { createEventBus } from "../events/index.ts"
 import { loadState } from "../state/index.ts"
-import { createAsyncQueue } from "../utils/asyncQueue.ts"
 import type { JobContext } from "./job.types.ts"
 import { runJob } from "./job-runner.ts"
 
@@ -16,22 +14,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
 })
-
-const fakeAgentFactory = () =>
-  ({
-    provider: "p",
-    model: "m",
-    run() {
-      const q = createAsyncQueue<AgentEvent>()
-      q.close()
-      const p = Promise.resolve("ok")
-      const h = p as RunHandle<string>
-      h[Symbol.asyncIterator] = () => q[Symbol.asyncIterator]()
-      h.output = p
-      return h
-    },
-    close: () => Promise.resolve(),
-  }) as Agent
 
 test("happy path: status done, runs[0] has expected steps, persists state", async () => {
   const bus = createEventBus()
@@ -48,8 +30,7 @@ test("happy path: status done, runs[0] has expected steps, persists state", asyn
     stateDir: dir,
     events: bus,
     signal: new AbortController().signal,
-    createAgent: () => fakeAgentFactory(),
-    run: async (_payload, ctx: JobContext) => {
+    run: async (_payload: unknown, ctx: JobContext) => {
       await ctx.step("a", async () => {})
       await ctx.step("b", async () => {})
     },
@@ -77,7 +58,6 @@ test("throwing run() ends job failed", async () => {
     stateDir: dir,
     events: bus,
     signal: new AbortController().signal,
-    createAgent: () => fakeAgentFactory(),
     run: async () => {
       throw new Error("nope")
     },
@@ -104,7 +84,6 @@ test("aborted signal during run ends job stopped", async () => {
     stateDir: dir,
     events: bus,
     signal: ctrl.signal,
-    createAgent: () => fakeAgentFactory(),
     run: async (_p, ctx) => {
       ctrl.abort()
       await ctx.step("x", async () => {}) // will throw because signal aborted
@@ -127,7 +106,6 @@ test("second run on existing state appends a new RunState (id increments)", asyn
     stateDir: dir,
     events: bus,
     signal: new AbortController().signal,
-    createAgent: () => fakeAgentFactory(),
     run: async (_p, ctx) => {
       await ctx.step("a", async () => {})
     },
@@ -141,7 +119,6 @@ test("second run on existing state appends a new RunState (id increments)", asyn
     stateDir: dir,
     events: bus,
     signal: new AbortController().signal,
-    createAgent: () => fakeAgentFactory(),
     run: async (_p, ctx) => {
       await ctx.step("b", async () => {})
     },
@@ -149,5 +126,5 @@ test("second run on existing state appends a new RunState (id increments)", asyn
 
   const state = await loadState(join(dir, "f", "j"))
   expect(state?.runs).toHaveLength(2)
-  expect(state?.runs[1].id).toBe(1)
+  expect(state?.runs[1].runId).toBe(1)
 })

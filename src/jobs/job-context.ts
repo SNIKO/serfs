@@ -1,5 +1,5 @@
 import type { EventBus } from "../events/index.ts"
-import { type AgentFactory, runAgentStep, runCodeStep } from "../steps/index.ts"
+import { runAgentStep, runCodeStep } from "../steps/index.ts"
 import type { AgentCallOptions, JobContext, JobState } from "./job.types.ts"
 
 export interface BuildJobContextArgs {
@@ -11,7 +11,6 @@ export interface BuildJobContextArgs {
   state: JobState
   signal: AbortSignal
   events: EventBus
-  createAgent: AgentFactory
 }
 
 export function buildJobContext(args: BuildJobContextArgs): JobContext {
@@ -53,7 +52,6 @@ export function buildJobContext(args: BuildJobContextArgs): JobContext {
         workspaceDir: args.workspaceDir,
         events: args.events,
         signal: args.signal,
-        createAgent: args.createAgent,
       })
     },
   }

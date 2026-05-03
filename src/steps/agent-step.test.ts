@@ -3,11 +3,19 @@ import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { z } from "zod"
-import type { AgentEvent, RunHandle } from "../agents/index.ts"
+import type { AgentConfig, AgentEvent, RunHandle } from "../agents/index.ts"
 import { createEventBus } from "../events/index.ts"
 import type { JobState } from "../jobs/job.types.ts"
 import { createAsyncQueue } from "../utils/asyncQueue.ts"
 import { runAgentStep } from "./agent-step.ts"
+
+let activeFactory: (cfg: AgentConfig) => unknown = () => {
+  throw new Error("No factory set")
+}
+
+mock.module("../agents/index.ts", () => ({
+  createAgent: (cfg: AgentConfig) => activeFactory(cfg),
+}))
 
 let dir: string
 
@@ -20,12 +28,12 @@ afterEach(async () => {
 
 function jobState(): JobState {
   return {
-    id: "j",
+    jobId: "j",
     flowId: "f",
     status: "running",
     startedAt: 0,
     totals: { tokens: { input: 0, output: 0 } },
-    runs: [{ id: 0, startedAt: 0, steps: [] }],
+    runs: [{ runId: 0, startedAt: 0, steps: [] }],
   }
 }
 
@@ -70,6 +78,7 @@ test("renders frontmatter provider/model, writes NDJSON, emits agent.event, retu
     },
   ]
   const factory = makeFakeAgentFactory({ events, output: "Done." })
+  activeFactory = factory
   const state = jobState()
 
   const result = await runAgentStep({
@@ -89,7 +98,6 @@ Investigate {{INCIDENT_ID}}.`,
     workspaceDir: dir,
     events: bus,
     signal: new AbortController().signal,
-    createAgent: factory,
   })
 
   expect(result).toBe("Done.")
@@ -110,6 +118,7 @@ Investigate {{INCIDENT_ID}}.`,
 
 test("call-site provider/model overrides frontmatter", async () => {
   const factory = makeFakeAgentFactory({ events: [], output: "ok" })
+  activeFactory = factory
   const state = jobState()
 
   await runAgentStep({
@@ -129,7 +138,6 @@ hi`,
     workspaceDir: dir,
     events: createEventBus(),
     signal: new AbortController().signal,
-    createAgent: factory,
   })
 
   expect(factory).toHaveBeenCalledWith(
@@ -139,6 +147,7 @@ hi`,
 
 test("missing variable fails the step", async () => {
   const factory = makeFakeAgentFactory({ events: [], output: "" })
+  activeFactory = factory
   const state = jobState()
 
   await expect(
@@ -155,7 +164,6 @@ test("missing variable fails the step", async () => {
       workspaceDir: dir,
       events: createEventBus(),
       signal: new AbortController().signal,
-      createAgent: factory,
     }),
   ).rejects.toThrow(/MISSING/)
 
@@ -168,6 +176,7 @@ test("schema validates output and returns typed result", async () => {
     events: [],
     output: '{"approved": true}',
   })
+  activeFactory = factory
   const state = jobState()
 
   const result = await runAgentStep<{ approved: boolean }>({
@@ -183,7 +192,6 @@ test("schema validates output and returns typed result", async () => {
     workspaceDir: dir,
     events: createEventBus(),
     signal: new AbortController().signal,
-    createAgent: factory,
   })
 
   expect(result).toEqual({ approved: true })
@@ -206,6 +214,7 @@ test("provides built-in vars (JOB_DIR, WORKSPACE_DIR, FLOW_ID, JOB_ID, TODAY)", 
     },
     close: () => Promise.resolve(),
   }))
+  activeFactory = factory
 
   await runAgentStep({
     name: "x",
@@ -221,7 +230,6 @@ test("provides built-in vars (JOB_DIR, WORKSPACE_DIR, FLOW_ID, JOB_ID, TODAY)", 
     workspaceDir: "/ws",
     events: createEventBus(),
     signal: new AbortController().signal,
-    createAgent: factory,
   })
 
   expect(renderedBody).toContain(join(dir, "F", "J"))

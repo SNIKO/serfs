@@ -1,4 +1,3 @@
-import { type Agent, type AgentConfig, createAgent as defaultCreateAgent } from "../agents/index.ts"
 import { type DashboardHandle, startDashboard } from "../dashboard/index.ts"
 import { createEventBus, type EventBus, type SerfsEvent } from "../events/index.ts"
 import { createFlowRegistry, type FlowRegistry, startFlowScheduler } from "../flows/index.ts"
@@ -12,9 +11,7 @@ export interface Serfs {
   stopJob(flowId: string, jobId: string): void
 }
 
-export interface CreateSerfsArgs extends SerfsConfigInput {
-  createAgent?: (config: AgentConfig) => Agent
-}
+export interface CreateSerfsArgs extends SerfsConfigInput {}
 
 export function createSerfs(input: CreateSerfsArgs): Serfs {
   const config: SerfsConfig = validateConfig(input)
@@ -23,7 +20,6 @@ export function createSerfs(input: CreateSerfsArgs): Serfs {
   for (const flow of config.flows) registry.register(flow)
 
   const queue = createJobQueue<unknown>({ globalLimit: config.maxConcurrentJobs })
-  const createAgent = input.createAgent ?? defaultCreateAgent
 
   let stopFlows: (() => void)[] = []
   let pumpStopped = false
@@ -40,7 +36,6 @@ export function createSerfs(input: CreateSerfsArgs): Serfs {
         queue,
         events,
         registry,
-        createAgent,
         isStopped: () => pumpStopped,
       })
       if (config.dashboard.enabled) {
@@ -80,7 +75,6 @@ interface PumpArgs {
   queue: JobQueue<unknown>
   events: EventBus
   registry: FlowRegistry
-  createAgent: (config: AgentConfig) => Agent
   isStopped: () => boolean
 }
 
@@ -108,7 +102,6 @@ async function runJobPump(p: PumpArgs): Promise<void> {
           stateDir: p.config.stateDir,
           events: p.events,
           signal: next.handle.signal,
-          createAgent: p.createAgent,
           run: (payload, ctx) => flow.run(payload, ctx),
         })
       } finally {
