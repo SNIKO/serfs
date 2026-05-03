@@ -1,4 +1,9 @@
-import { approveAll, CopilotClient, type SessionEvent } from "@github/copilot-sdk"
+import {
+  CopilotClient,
+  type PermissionHandler,
+  type PermissionRequestResult,
+  type SessionEvent,
+} from "@github/copilot-sdk"
 import { subscriptionToAsyncGenerator } from "../utils/subscription.ts"
 import { renderMessages, runWithEvents, tryParseOutput } from "./agent.ts"
 import type {
@@ -19,6 +24,7 @@ import type {
 interface RunState {
   startTime: number
   hasError: boolean
+  errorMessage?: string
   messageId?: string
   messageContent: string
   reasoningId?: string
@@ -44,6 +50,7 @@ function mapCopilotEvent(event: SessionEvent, state: RunState): AgentEvent[] {
   switch (event.type) {
     case "session.error":
       state.hasError = true
+      state.errorMessage = event.data.message
       return [
         {
           type: "error",
@@ -157,15 +164,19 @@ function mapCopilotEvent(event: SessionEvent, state: RunState): AgentEvent[] {
       ]
     }
 
-    case "assistant.usage":
+    case "assistant.usage": {
+      const prevOutput = state.stats.tokens?.output ?? 0
+      const newOutput = prevOutput + (event.data.outputTokens ?? 0)
+      const newInput = event.data.inputTokens ?? state.stats.tokens?.input ?? 0
       state.stats.tokens = {
-        input: event.data.inputTokens,
-        output: event.data.outputTokens,
-        total: (event.data.inputTokens ?? 0) + (event.data.outputTokens ?? 0),
+        input: newInput,
+        output: newOutput,
+        total: newInput + newOutput,
       }
       state.stats.costUsd = event.data.cost
       state.stats.durationMs = event.data.duration
       return [{ type: "stats.updated", timestamp: ts, data: state.stats }]
+    }
 
     case "session.usage_info":
       state.stats.context = {
@@ -218,6 +229,16 @@ const formatParseError = (error: Error): AgentEvent =>
 // COPILOT AGENT
 // ============================================
 
+function getPermissionHandler(config: AgentConfig): PermissionHandler {
+  const handler = (
+    config.providerOptions as { onPermissionRequest?: PermissionHandler } | undefined
+  )?.onPermissionRequest
+  // The CLI resolves permission events via b9() which expects PermissionDecision format
+  // ("approve-once", "reject", etc.), not the PermissionRequestResult format ("approved").
+  // The SDK's PermissionRequestResult type is misaligned with what the CLI actually expects.
+  return handler ?? (() => ({ kind: "approve-once" }) as unknown as PermissionRequestResult)
+}
+
 export function createCopilotAgent(config: AgentConfig): Agent {
   const client = new CopilotClient({
     cwd: config.cwd,
@@ -244,9 +265,9 @@ export function createCopilotAgent(config: AgentConfig): Agent {
     try {
       const session = await client.createSession({
         model: config.model,
+        onPermissionRequest: getPermissionHandler(config),
         workingDirectory: config.cwd,
         streaming: options?.streaming ?? false,
-        onPermissionRequest: approveAll,
         mcpServers: config.mcpServers as Record<
           string,
           import("@github/copilot-sdk").MCPServerConfig
@@ -283,6 +304,12 @@ export function createCopilotAgent(config: AgentConfig): Agent {
 
       state.stats.durationMs = Date.now() - state.startTime
       yield { type: "stats.updated", timestamp: Date.now(), data: state.stats }
+
+      if (state.hasError) {
+        const error = new Error(state.errorMessage ?? "Agent session failed with error")
+        reject(error)
+        return
+      }
 
       const result = tryParseOutput<T>(state.messageContent, options.outputSchema, formatParseError)
       if (!result.ok) {
