@@ -237,3 +237,71 @@ test("provides built-in vars (JOB_DIR, WORKSPACE_DIR, FLOW_ID, JOB_ID, TODAY)", 
   expect(renderedBody).toContain("F")
   expect(renderedBody).toContain("J")
 })
+
+test("pre-aborted signal fails the step without calling the agent", async () => {
+  const factory = makeFakeAgentFactory({ events: [], output: "ok" })
+  activeFactory = factory
+  const state = jobState()
+  const ctrl = new AbortController()
+  ctrl.abort()
+
+  await expect(
+    runAgentStep({
+      name: "x",
+      template: "---\nprovider: p\nmodel: m\n---\nhi",
+      vars: {},
+      options: {},
+      state,
+      flowId: "f",
+      jobId: "j",
+      runId: 0,
+      stateDir: dir,
+      workspaceDir: dir,
+      events: createEventBus(),
+      signal: ctrl.signal,
+    }),
+  ).rejects.toThrow(/abort/i)
+
+  expect(factory).not.toHaveBeenCalled()
+  expect(state.runs[0].steps[0].status).toBe("failed")
+})
+
+test("agent output rejection ends step failed and rethrows the error", async () => {
+  const factory = mock(() => ({
+    provider: "p",
+    model: "m",
+    run() {
+      const queue = createAsyncQueue<AgentEvent>()
+      queue.close()
+      const rejected = Promise.reject<string>(new Error("agent exploded"))
+      rejected.catch(() => {}) // suppress unhandled rejection
+      const placeholder = Promise.resolve("") as RunHandle<string>
+      placeholder[Symbol.asyncIterator] = () => queue[Symbol.asyncIterator]()
+      placeholder.output = rejected
+      return placeholder
+    },
+    close: () => Promise.resolve(),
+  }))
+  activeFactory = factory
+  const state = jobState()
+
+  await expect(
+    runAgentStep({
+      name: "x",
+      template: "---\nprovider: p\nmodel: m\n---\nhi",
+      vars: {},
+      options: {},
+      state,
+      flowId: "f",
+      jobId: "j",
+      runId: 0,
+      stateDir: dir,
+      workspaceDir: dir,
+      events: createEventBus(),
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toThrow("agent exploded")
+
+  expect(state.runs[0].steps[0].status).toBe("failed")
+  expect(state.runs[0].steps[0].error).toBe("agent exploded")
+})

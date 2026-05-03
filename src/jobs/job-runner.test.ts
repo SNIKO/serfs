@@ -128,3 +128,48 @@ test("second run on existing state appends a new RunState (id increments)", asyn
   expect(state?.runs).toHaveLength(2)
   expect(state?.runs[1].runId).toBe(1)
 })
+
+test("job.start is emitted before job.end", async () => {
+  const bus = createEventBus()
+  const emitted: string[] = []
+  bus.on("*", (e) => emitted.push(e.type))
+
+  await runJob({
+    flowId: "f",
+    jobId: "j",
+    payload: {},
+    workspaceDir: dir,
+    stateDir: dir,
+    events: bus,
+    signal: new AbortController().signal,
+    run: async () => {},
+  })
+
+  expect(emitted).toContain("job.start")
+  expect(emitted.indexOf("job.start")).toBeLessThan(emitted.indexOf("job.end"))
+})
+
+test("failed job captures error message in state and job.end event", async () => {
+  const bus = createEventBus()
+  const endEvents: { status: string; error?: string }[] = []
+  bus.on("job.end", (e) => {
+    if (e.type === "job.end") endEvents.push({ status: e.status, error: e.error })
+  })
+
+  await runJob({
+    flowId: "f",
+    jobId: "j",
+    payload: {},
+    workspaceDir: dir,
+    stateDir: dir,
+    events: bus,
+    signal: new AbortController().signal,
+    run: async () => {
+      throw new Error("nope")
+    },
+  })
+
+  const state = await loadState(join(dir, "f", "j"))
+  expect(state?.error).toBe("nope")
+  expect(endEvents[0].error).toBe("nope")
+})

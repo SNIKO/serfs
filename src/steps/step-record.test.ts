@@ -68,3 +68,32 @@ test("applyAgentStats updates step.agent and accumulates job totals", () => {
   expect(s.totals.tokens).toEqual({ input: 100, output: 50 })
   expect(s.totals.costUsd).toBe(0.04)
 })
+
+test("applyAgentStats delta-accumulates job totals across repeated stats.updated calls", () => {
+  const s = makeJobState()
+  const step: StepState = appendStep(s, "x")
+  applyAgentStats(s, step, { provider: "p", model: "m", logPath: "/" })
+
+  // Simulate two stats.updated events with increasing cumulative token counts
+  applyAgentStats(s, step, { tokens: { input: 100, output: 50 }, costUsd: 0.04 })
+  applyAgentStats(s, step, { tokens: { input: 200, output: 80 }, costUsd: 0.08 })
+
+  // Step holds the latest cumulative value
+  expect(step.agent?.tokens).toEqual({ input: 200, output: 80 })
+  expect(step.agent?.costUsd).toBe(0.08)
+  // Job totals match the latest value — delta logic prevents double-counting
+  expect(s.totals.tokens).toEqual({ input: 200, output: 80 })
+  expect(s.totals.costUsd).toBeCloseTo(0.08)
+})
+
+test("applyAgentStats accumulates job totals independently across two steps", () => {
+  const s = makeJobState()
+  const stepA: StepState = appendStep(s, "a")
+  const stepB: StepState = appendStep(s, "b")
+
+  applyAgentStats(s, stepA, { tokens: { input: 100, output: 50 }, costUsd: 0.04 })
+  applyAgentStats(s, stepB, { tokens: { input: 200, output: 80 }, costUsd: 0.06 })
+
+  expect(s.totals.tokens).toEqual({ input: 300, output: 130 })
+  expect(s.totals.costUsd).toBeCloseTo(0.1)
+})

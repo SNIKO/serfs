@@ -36,3 +36,8 @@ test("list returns all registered flows", () => {
       .sort(),
   ).toEqual(["a", "b"])
 })
+
+test("get returns undefined for an unregistered id", () => {
+  const reg = createFlowRegistry()
+  expect(reg.get("nope")).toBeUndefined()
+})

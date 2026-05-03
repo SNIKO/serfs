@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createEventBus } from "../events/index.ts"
 import type { JobState } from "../jobs/job.types.ts"
+import { loadState } from "../state/index.ts"
 import { runCodeStep } from "./code-step.ts"
 
 let dir: string
@@ -95,4 +96,56 @@ test("aborts before running fn when signal already aborted", async () => {
 
   expect(fn).not.toHaveBeenCalled()
   expect(state.runs[0].steps[0].status).toBe("failed")
+})
+
+test("fn throws: step.end event carries failed status and error message", async () => {
+  const bus = createEventBus()
+  const endEvents: { status: string; error?: string }[] = []
+  bus.on("step.end", (e) => {
+    if (e.type === "step.end") endEvents.push({ status: e.status, error: e.error })
+  })
+  const state = fixture()
+
+  await expect(
+    runCodeStep({
+      name: "send",
+      fn: () => Promise.reject(new Error("kaboom")),
+      state,
+      jobDir: dir,
+      flowId: "f",
+      jobId: "j",
+      runId: 0,
+      events: bus,
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toThrow("kaboom")
+
+  expect(endEvents).toHaveLength(1)
+  expect(endEvents[0].status).toBe("failed")
+  expect(endEvents[0].error).toBe("kaboom")
+})
+
+test("abort: step state is persisted to disk as failed before throwing", async () => {
+  const bus = createEventBus()
+  const fn = mock(() => Promise.resolve())
+  const state = fixture()
+  const ctrl = new AbortController()
+  ctrl.abort()
+
+  await expect(
+    runCodeStep({
+      name: "x",
+      fn,
+      state,
+      jobDir: dir,
+      flowId: "f",
+      jobId: "j",
+      runId: 0,
+      events: bus,
+      signal: ctrl.signal,
+    }),
+  ).rejects.toThrow()
+
+  const persisted = await loadState(dir)
+  expect(persisted?.runs[0].steps[0].status).toBe("failed")
 })

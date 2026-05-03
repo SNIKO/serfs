@@ -77,3 +77,18 @@ test("entry.payload preserves the original job descriptor", () => {
   queue.enqueue(entry("a", "1", { x: 42 }), { flowLimit: 10 })
   expect(queue.next()?.entry.payload).toEqual({ x: 42 })
 })
+
+test("size() reports queued and running counts accurately", () => {
+  const queue = createJobQueue<{ x: number }>({ globalLimit: 10 })
+  expect(queue.size()).toEqual({ queued: 0, running: 0 })
+
+  queue.enqueue(entry("a", "1"), { flowLimit: 10 })
+  queue.enqueue(entry("a", "2"), { flowLimit: 10 })
+  expect(queue.size()).toEqual({ queued: 2, running: 0 })
+
+  const taken = queue.next()
+  expect(queue.size()).toEqual({ queued: 1, running: 1 })
+
+  if (taken) queue.markFinished(taken.handle)
+  expect(queue.size()).toEqual({ queued: 1, running: 0 })
+})

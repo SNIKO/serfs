@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test"
+import { expect, mock, spyOn, test } from "bun:test"
 import type { SerfsEvent } from "./event.types.ts"
 import { createEventBus } from "./event-bus.ts"
 
@@ -46,7 +46,9 @@ test("a throwing listener does not stop other listeners", () => {
   bus.on("job.queued", bad)
   bus.on("job.queued", good)
 
+  const errorSpy = spyOn(console, "error").mockImplementation(() => {})
   bus.emit({ type: "job.queued", flowId: "f", jobId: "j", at: 1 })
+  errorSpy.mockRestore()
 
   expect(bad).toHaveBeenCalled()
   expect(good).toHaveBeenCalled()

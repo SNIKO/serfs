@@ -79,3 +79,42 @@ test("invalid config throws synchronously from createSerfs", () => {
     } as never),
   ).toThrow(/stateDir/)
 })
+
+test("stopJob aborts the running job before the next step", async () => {
+  let stopRef: (flowId: string, jobId: string) => void = () => {}
+
+  const stopFlow: Flow<{ id: string }> = {
+    id: "stop-test",
+    config: { workspaceDir: dir, maxConcurrentJobs: 1, pollIntervalMs: 5 },
+    fetchJobs: async () => [{ id: "J2" }],
+    getJobId: (j) => j.id,
+    isRunnable: async () => true,
+    run: async (_j, ctx) => {
+      await ctx.step("a", async () => {})
+      stopRef("stop-test", "J2") // abort signal before next step
+      await ctx.step("b", async () => {}) // should throw due to aborted signal
+    },
+  }
+
+  const serfs = createSerfs({
+    stateDir: dir,
+    maxConcurrentJobs: 1,
+    flows: [stopFlow],
+    dashboard: { enabled: false },
+  })
+  stopRef = (fId, jId) => serfs.stopJob(fId, jId)
+
+  await serfs.start()
+
+  const status = await new Promise<string>((resolve) => {
+    const off = serfs.on("job.end", (e) => {
+      if (e.type === "job.end") {
+        off()
+        resolve(e.status)
+      }
+    })
+  })
+
+  await serfs.stop()
+  expect(status).toBe("stopped")
+})
