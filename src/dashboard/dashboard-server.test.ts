@@ -116,7 +116,7 @@ test("POST /api/flows/:id/jobs/:jobId/stop returns 204 and aborts the job signal
   const events = createEventBus()
 
   queue.enqueue({ flowId: "a", jobId: "J1", payload: null }, { flowLimit: 1 })
-  const running = queue.next()!
+  const running = queue.next()
 
   const dash = startDashboard({
     port: 0,
@@ -132,7 +132,7 @@ test("POST /api/flows/:id/jobs/:jobId/stop returns 204 and aborts the job signal
       method: "POST",
     })
     expect(res.status).toBe(204)
-    expect(running.handle.signal.aborted).toBe(true)
+    expect(running?.handle.signal.aborted).toBe(true)
   } finally {
     await dash.stop()
   }
