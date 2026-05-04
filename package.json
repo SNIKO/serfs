@@ -19,14 +19,15 @@
     "build": "bun build src/index.ts --outdir dist --target node --packages external && tsc -p tsconfig.build.json",
     "check": "tsc --noEmit && biome check .",
     "fix": "biome check --write .",
-    "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "prepublishOnly": "bun run build"
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "bun run build && changeset publish"
   },
   "devDependencies": {
     "@biomejs/biome": "latest",
     "@types/bun": "latest",
-    "typescript": "latest"
+    "typescript": "latest",
+    "@changesets/cli": "^2.29.8"
   },
   "keywords": [],
   "author": "",
