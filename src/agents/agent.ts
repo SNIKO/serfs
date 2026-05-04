@@ -1,6 +1,5 @@
-import type { Message } from "../types.ts"
 import { createAsyncQueue } from "../utils/asyncQueue.ts"
-import type { AgentEvent, RunHandle, RunOptions } from "./types.ts"
+import type { AgentEvent, Message, RunHandle, RunOptions } from "./types.ts"
 
 export function renderMessages(messages: Message[]): string {
   return messages

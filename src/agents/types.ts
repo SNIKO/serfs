@@ -1,5 +1,14 @@
 import type { z } from "zod"
-import type { Message } from "../types.ts"
+
+// ============================================
+// SHARED TYPES
+// ============================================
+
+export interface Message<T = unknown> {
+  role: string
+  content: string
+  data?: T
+}
 
 // ============================================
 // PROVIDER & CONFIG
