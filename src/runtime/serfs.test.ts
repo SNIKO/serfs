@@ -2,9 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { AgentEvent, RunHandle } from "../agents/index.ts"
 import type { Flow } from "../flows/index.ts"
-import { createAsyncQueue } from "../utils/asyncQueue.ts"
 import { createSerfs } from "./serfs.ts"
 
 let dir: string
@@ -13,21 +11,6 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
-})
-
-const okFactory = () => ({
-  provider: "p",
-  model: "m",
-  run() {
-    const q = createAsyncQueue<AgentEvent>()
-    q.close()
-    const p = Promise.resolve("ok")
-    const h = p as RunHandle<string>
-    h[Symbol.asyncIterator] = () => q[Symbol.asyncIterator]()
-    h.output = p
-    return h
-  },
-  close: () => Promise.resolve(),
 })
 
 function eagerFlow(jobId: string): Flow<{ id: string }> {
@@ -49,7 +32,6 @@ test("start/stop lifecycle: throws on bad config; processes one job end-to-end",
     maxConcurrentJobs: 1,
     flows: [eagerFlow("J1")],
     dashboard: { enabled: false },
-    createAgent: () => okFactory() as never,
   })
 
   const events: string[] = []
