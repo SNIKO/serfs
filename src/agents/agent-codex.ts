@@ -1,5 +1,6 @@
 import {
   Codex,
+  type CodexOptions,
   type ThreadOptions as CodexThreadOptions,
   type TurnOptions as CodexTurnOptions,
   type McpToolCallItem,
@@ -14,10 +15,24 @@ import type {
   AgentEvent,
   AgentStats,
   ErrorCode,
+  McpServerConfig,
   RawEvent,
   RunHandle,
   RunOptions,
 } from "./types.ts"
+
+type CodexConfigValue = string | number | boolean | CodexConfigValue[] | CodexConfigObject
+
+type CodexConfigObject = {
+  [key: string]: CodexConfigValue
+}
+
+type CodexProviderOptions = Partial<CodexOptions & CodexThreadOptions> &
+  Record<string, unknown> & {
+    defaultPermissions?: string
+    permissions?: CodexConfigObject
+    sandboxWorkspaceWrite?: CodexConfigObject
+  }
 
 interface ToolState {
   name: string
@@ -35,6 +50,121 @@ interface RunState {
   reasoningById: Map<string, string>
   tools: Map<string, ToolState>
   stats: AgentStats
+}
+
+interface CodexRunContext {
+  codexClient: Codex
+  config: AgentConfig
+  providerOptions: CodexProviderOptions
+}
+
+export function createCodexAgent(config: AgentConfig): Agent {
+  const providerOptions: CodexProviderOptions = config.providerOptions ?? {}
+  const codexClient = new Codex(buildCodexClientOptions(config, providerOptions))
+
+  return {
+    provider: config.provider,
+    model: config.model,
+    run: (options) => runCodexAgent(options, { codexClient, config, providerOptions }),
+    close: closeCodexAgent,
+  }
+}
+
+function runCodexAgent<T = string>(options: RunOptions<T>, context: CodexRunContext): RunHandle<T> {
+  const state = createRunState()
+  const { promise, resolve, reject } = Promise.withResolvers<T>()
+  const events = streamCodexThreadEvents(options, state, context, resolve, reject)
+
+  return runWithEvents(events, promise, reject)
+}
+
+async function* streamCodexThreadEvents<T>(
+  options: RunOptions<T>,
+  state: RunState,
+  context: CodexRunContext,
+  resolve: (output: T) => void,
+  reject: (error: Error) => void,
+): AsyncGenerator<AgentEvent, void> {
+  try {
+    yield* runCodexThread(options, state, context)
+    yield* finishCodexRun(options, state, resolve, reject)
+  } catch (error) {
+    const err = createRunError(error)
+    yield createErrorEvent(getErrorCode(err), err.message, err.name === "AbortError")
+    reject(err)
+  }
+}
+
+async function* runCodexThread<T>(
+  options: RunOptions<T>,
+  state: RunState,
+  context: CodexRunContext,
+): AsyncGenerator<AgentEvent, void> {
+  const { config, codexClient, providerOptions } = context
+  const thread = codexClient.startThread(buildCodexThreadOptions(config, providerOptions))
+  const prompt = renderMessages(options.messages)
+  const { events } = await thread.runStreamed(prompt, {
+    outputSchema: options.outputSchema?.toJSONSchema(),
+    signal: options.abortSignal,
+  } satisfies CodexTurnOptions)
+
+  for await (const event of events) {
+    if (options.emitRawEvents ?? false) {
+      yield createRawEvent(event)
+    }
+
+    for (const mappedEvent of mapCodexEvent(event, state)) {
+      yield mappedEvent
+    }
+
+    if (state.hasError) {
+      throw new Error(state.lastErrorMessage ?? "Codex run failed")
+    }
+  }
+}
+
+async function* finishCodexRun<T>(
+  options: RunOptions<T>,
+  state: RunState,
+  resolve: (output: T) => void,
+  reject: (error: Error) => void,
+): AsyncGenerator<AgentEvent, void> {
+  state.stats.durationMs = Date.now() - state.startTime
+  yield { type: "stats.updated", timestamp: Date.now(), data: state.stats }
+
+  const parsedOutput = tryParseOutput<T>(
+    state.messageContent,
+    options.outputSchema,
+    formatParseError,
+  )
+  if (!parsedOutput.ok) {
+    yield parsedOutput.event
+    reject(parsedOutput.error)
+    return
+  }
+
+  resolve(parsedOutput.output)
+}
+
+function closeCodexAgent(): Promise<void> {
+  return Promise.resolve()
+}
+
+function createRawEvent(event: ThreadEvent): RawEvent<ThreadEvent> {
+  return {
+    type: "raw",
+    timestamp: Date.now(),
+    provider: "codex",
+    data: event,
+  }
+}
+
+function createRunError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
+}
+
+function getErrorCode(error: Error): ErrorCode {
+  return error.name === "AbortError" ? "ABORTED" : "PROVIDER_ERROR"
 }
 
 function createRunState(): RunState {
@@ -60,7 +190,7 @@ function createErrorEvent(code: ErrorCode, message: string, recoverable = false)
 }
 
 function mapUsageToStats(usage: Usage, state: RunState): AgentEvent {
-  const input = usage.input_tokens + usage.cached_input_tokens
+  const input = usage.input_tokens
   const output = usage.output_tokens
   state.stats.tokens = {
     input,
@@ -75,6 +205,20 @@ function computeDelta(id: string, text: string, store: Map<string, string>): str
   const delta = text.slice(previous.length)
   store.set(id, text)
   return delta
+}
+
+function createToolState(name: string, kind: ToolState["kind"]): ToolState {
+  return { name, kind, lastOutput: "" }
+}
+
+function normalizeToolInput(value: unknown): Record<string, unknown> | undefined {
+  if (isRecord(value)) {
+    return value
+  }
+  if (value === undefined) {
+    return undefined
+  }
+  return { value }
 }
 
 function mapAgentMessage(
@@ -144,11 +288,7 @@ function mapCommandExecution(
 ): AgentEvent[] {
   const events: AgentEvent[] = []
   const ts = Date.now()
-  const existing = state.tools.get(item.id) ?? {
-    name: item.command,
-    kind: "builtin" as const,
-    lastOutput: "",
-  }
+  const existing = state.tools.get(item.id) ?? createToolState(item.command, "builtin")
 
   if (!state.tools.has(item.id)) {
     state.tools.set(item.id, existing)
@@ -226,11 +366,7 @@ function mapMcpToolCall(
 ): AgentEvent[] {
   const events: AgentEvent[] = []
   const ts = Date.now()
-  const existing = state.tools.get(item.id) ?? {
-    name: item.tool,
-    kind: "mcp" as const,
-    lastOutput: "",
-  }
+  const existing = state.tools.get(item.id) ?? createToolState(item.tool, "mcp")
 
   if (!state.tools.has(item.id)) {
     state.tools.set(item.id, existing)
@@ -243,7 +379,7 @@ function mapMcpToolCall(
           toolId: item.id,
           name: item.tool,
           kind: "mcp",
-          input: item.arguments as Record<string, unknown>,
+          input: normalizeToolInput(item.arguments),
           mcp: { server: item.server, tool: item.tool },
         },
       },
@@ -427,88 +563,136 @@ function mapCodexEvent(event: ThreadEvent, state: RunState): AgentEvent[] {
 const formatParseError = (error: Error): AgentEvent =>
   createErrorEvent("PARSE_ERROR", `Failed to parse output: ${error.message}`)
 
-export function createCodexAgent(config: AgentConfig): Agent {
-  const providerOptions = (config.providerOptions ?? {}) as Partial<CodexThreadOptions>
-  const codexClient = new Codex({
-    ...(config.providerOptions as Record<string, unknown>),
-    env: config.env ?? (config.providerOptions as { env?: Record<string, string> })?.env,
-  })
+function buildCodexClientOptions(
+  config: AgentConfig,
+  providerOptions: CodexProviderOptions,
+): CodexOptions {
+  const codexConfig = buildCodexConfig(providerOptions, config.mcpServers)
+  return {
+    apiKey: providerOptions.apiKey,
+    baseUrl: providerOptions.baseUrl,
+    codexPathOverride: providerOptions.codexPathOverride,
+    env: config.env ?? providerOptions.env,
+    config: hasObjectKeys(codexConfig) ? codexConfig : undefined,
+  }
+}
 
-  function run<T = string>(options: RunOptions<T>): RunHandle<T> {
-    const state = createRunState()
-    const { promise, resolve, reject } = Promise.withResolvers<T>()
-    const source = runThreadEvents(options, state, resolve, reject)
+function buildCodexThreadOptions(
+  config: AgentConfig,
+  providerOptions: CodexProviderOptions,
+): CodexThreadOptions {
+  return {
+    model: config.model ?? providerOptions.model,
+    workingDirectory: config.cwd ?? providerOptions.workingDirectory,
+    skipGitRepoCheck: providerOptions.skipGitRepoCheck,
+    modelReasoningEffort: providerOptions.modelReasoningEffort,
+    networkAccessEnabled: providerOptions.networkAccessEnabled,
+    webSearchMode: providerOptions.webSearchMode,
+    webSearchEnabled: providerOptions.webSearchEnabled,
+    approvalPolicy: getApprovalPolicy(providerOptions),
+    sandboxMode: getSandboxMode(providerOptions),
+    additionalDirectories: providerOptions.additionalDirectories,
+  }
+}
 
-    return runWithEvents(source, promise, reject)
+function buildCodexConfig(
+  providerOptions: CodexProviderOptions,
+  mcpServers?: Record<string, McpServerConfig>,
+): CodexConfigObject {
+  const codexConfig: CodexConfigObject = { ...(providerOptions.config ?? {}) }
+
+  if (providerOptions.defaultPermissions) {
+    codexConfig.default_permissions = providerOptions.defaultPermissions
+  }
+  if (providerOptions.permissions) {
+    codexConfig.permissions = providerOptions.permissions
+  }
+  if (providerOptions.sandboxWorkspaceWrite) {
+    codexConfig.sandbox_workspace_write = providerOptions.sandboxWorkspaceWrite
   }
 
-  async function* runThreadEvents<T>(
-    options: RunOptions<T>,
-    state: RunState,
-    resolve: (output: T) => void,
-    reject: (error: Error) => void,
-  ): AsyncGenerator<AgentEvent, void> {
-    const emitRaw = options.emitRawEvents ?? false
+  const translatedMcpServers = translateMcpServers(mcpServers)
+  if (hasObjectKeys(translatedMcpServers)) {
+    const configuredMcpServers = isConfigObject(codexConfig.mcp_servers)
+      ? codexConfig.mcp_servers
+      : {}
+    codexConfig.mcp_servers = { ...configuredMcpServers, ...translatedMcpServers }
+  }
 
-    const thread = codexClient.startThread({
-      ...providerOptions,
-      model: config.model ?? providerOptions.model,
-      workingDirectory: config.cwd ?? providerOptions.workingDirectory,
-      sandboxMode: providerOptions.sandboxMode ?? "workspace-write",
-      approvalPolicy: providerOptions.approvalPolicy ?? "never",
-    })
+  return codexConfig
+}
 
-    try {
-      const prompt = renderMessages(options.messages)
-      const { events } = await thread.runStreamed(prompt, {
-        outputSchema: options.outputSchema?.toJSONSchema(),
-        signal: options.abortSignal,
-      } satisfies CodexTurnOptions)
+function getApprovalPolicy(
+  providerOptions: CodexProviderOptions,
+): CodexThreadOptions["approvalPolicy"] {
+  if (providerOptions.approvalPolicy) {
+    return providerOptions.approvalPolicy
+  }
+  if (hasConfigValue(providerOptions.config, "approval_policy")) {
+    return undefined
+  }
+  return "never"
+}
 
-      for await (const event of events) {
-        if (emitRaw) {
-          const rawEvent: RawEvent<ThreadEvent> = {
-            type: "raw",
-            timestamp: Date.now(),
-            provider: "codex",
-            data: event,
-          }
-          yield rawEvent
-        }
+function getSandboxMode(providerOptions: CodexProviderOptions): CodexThreadOptions["sandboxMode"] {
+  if (providerOptions.sandboxMode) {
+    return providerOptions.sandboxMode
+  }
+  if (hasConfigValue(providerOptions.config, "sandbox_mode")) {
+    return undefined
+  }
+  if (
+    providerOptions.defaultPermissions ||
+    hasConfigValue(providerOptions.config, "default_permissions")
+  ) {
+    return undefined
+  }
+  return "workspace-write"
+}
 
-        const mapped = mapCodexEvent(event, state)
-        for (const item of mapped) {
-          yield item
-        }
+function translateMcpServers(mcpServers?: Record<string, McpServerConfig>): CodexConfigObject {
+  const codexMcpServers: CodexConfigObject = {}
+  if (!mcpServers) {
+    return codexMcpServers
+  }
 
-        if (state.hasError) {
-          reject(new Error(state.lastErrorMessage ?? "Codex run failed"))
-          return
-        }
+  for (const [name, server] of Object.entries(mcpServers)) {
+    const codexServer: CodexConfigObject = { enabled: true }
+    if ("url" in server) {
+      codexServer.url = server.url
+      if (server.headers) {
+        codexServer.http_headers = server.headers
       }
-
-      state.stats.durationMs = Date.now() - state.startTime
-      yield { type: "stats.updated", timestamp: Date.now(), data: state.stats }
-
-      const result = tryParseOutput<T>(state.messageContent, options.outputSchema, formatParseError)
-      if (!result.ok) {
-        yield result.event
-        reject(result.error)
-        return
+    } else {
+      codexServer.command = server.command
+      if (server.args) {
+        codexServer.args = server.args
       }
-
-      resolve(result.output)
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error))
-      const code = err.name === "AbortError" ? ("ABORTED" as const) : ("PROVIDER_ERROR" as const)
-      yield createErrorEvent(code, err.message, err.name === "AbortError")
-      reject(err)
+      if (server.env) {
+        codexServer.env = server.env
+      }
     }
+    if (server.tools.length > 0) {
+      codexServer.enabled_tools = server.tools
+    }
+    codexMcpServers[name] = codexServer
   }
 
-  async function close(): Promise<void> {
-    // Codex SDK does not expose a close method; nothing to clean up.
-  }
+  return codexMcpServers
+}
 
-  return { provider: config.provider, model: config.model, run, close }
+function hasConfigValue(config: CodexConfigObject | undefined, key: string): boolean {
+  return config?.[key] !== undefined
+}
+
+function hasObjectKeys(value: CodexConfigObject): boolean {
+  return Object.keys(value).length > 0
+}
+
+function isConfigObject(value: unknown): value is CodexConfigObject {
+  return isRecord(value)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }

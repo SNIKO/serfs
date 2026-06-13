@@ -27,15 +27,16 @@
     "@biomejs/biome": "latest",
     "@types/bun": "latest",
     "typescript": "latest",
-    "@changesets/cli": "^2.29.8"
+    "@changesets/cli": "^2.31.0"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@github/copilot-sdk": "^0.1.20",
-    "@openai/codex": "^0.93.0",
-    "@openai/codex-sdk": "^0.93.0",
-    "zod": "^4.3.6"
+    "@github/copilot-sdk": "^0.1.32",
+    "@openai/codex": "^0.139.0",
+    "@openai/codex-sdk": "^0.139.0",
+    "biome": "^0.3.3",
+    "zod": "^4.4.3"
   }
 }
