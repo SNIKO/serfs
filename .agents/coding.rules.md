@@ -4,6 +4,26 @@ Apply when writing or modifying TypeScript code.
 
 ---
 
+## Before Coding
+
+- State assumptions and success criteria when they affect implementation.
+- Ask instead of guessing if unclear requirements would change the code.
+- If there are multiple reasonable implementations, surface the tradeoffs.
+- Prefer the simplest working change; do not add unrequested features or flexibility.
+- Plan how to verify the change before editing.
+
+---
+
+## Surgical Changes
+
+- Touch only files and lines required by the task.
+- Match the surrounding style, names, and patterns.
+- Do not refactor or reformat unrelated code.
+- Mention unrelated dead code or issues instead of changing them.
+- Add error handling only for realistic scenarios the code can reach.
+
+---
+
 ## File Order: Story First, Details Below
 
 Every file follows this order:
@@ -191,6 +211,16 @@ if (user.isActive && isEligible(user)) { ... }
 
 ---
 
+## Verification
+
+- Turn requests into verifiable goals before implementation.
+- For validation work, add or update tests and make them pass.
+- For bug fixes, reproduce the bug in a test or command before fixing when practical.
+- Run the narrowest relevant checks first, then broader checks if risk warrants it.
+- Report what was verified and any checks that could not be run.
+
+---
+
 ## Don'ts
 
 - No `.then()` mixed with `async/await`
@@ -198,3 +228,4 @@ if (user.isActive && isEligible(user)) { ... }
 - No comments explaining what code does — rename
 - No abstractions before 3+ real uses
 - No helpers before the main function
+- No speculative features beyond the request
