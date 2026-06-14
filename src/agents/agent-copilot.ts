@@ -1,17 +1,19 @@
 import {
+  approveAll,
   CopilotClient,
+  type MCPServerConfig as CopilotMcpServerConfig,
   type PermissionHandler,
-  type PermissionRequestResult,
   type SessionEvent,
 } from "@github/copilot-sdk"
 import { subscriptionToAsyncGenerator } from "../utils/subscription.ts"
 import { renderMessages, runWithEvents, tryParseOutput } from "./agent.ts"
 import type {
   Agent,
-  AgentConfig,
   AgentEvent,
   AgentStats,
+  CopilotAgentConfig,
   ErrorCode,
+  McpServerConfig,
   RawEvent,
   RunHandle,
   RunOptions,
@@ -229,21 +231,37 @@ const formatParseError = (error: Error): AgentEvent =>
 // COPILOT AGENT
 // ============================================
 
-function getPermissionHandler(config: AgentConfig): PermissionHandler {
-  const handler = (
-    config.providerOptions as { onPermissionRequest?: PermissionHandler } | undefined
-  )?.onPermissionRequest
-  // The CLI resolves permission events via b9() which expects PermissionDecision format
-  // ("approve-once", "reject", etc.), not the PermissionRequestResult format ("approved").
-  // The SDK's PermissionRequestResult type is misaligned with what the CLI actually expects.
-  return handler ?? (() => ({ kind: "approve-once" }) as unknown as PermissionRequestResult)
+function getPermissionHandler(config: CopilotAgentConfig): PermissionHandler {
+  return config.providerOptions?.onPermissionRequest ?? approveAll
 }
 
-export function createCopilotAgent(config: AgentConfig): Agent {
+function translateMcpServers(
+  servers?: Record<string, McpServerConfig>,
+): Record<string, CopilotMcpServerConfig> | undefined {
+  if (!servers) {
+    return undefined
+  }
+
+  const translatedServers: Record<string, CopilotMcpServerConfig> = {}
+  for (const [name, server] of Object.entries(servers)) {
+    translatedServers[name] = translateMcpServer(server)
+  }
+  return translatedServers
+}
+
+function translateMcpServer(server: McpServerConfig): CopilotMcpServerConfig {
+  if ("url" in server) {
+    return server
+  }
+  return { ...server, args: server.args ?? [] }
+}
+
+export function createCopilotAgent(config: CopilotAgentConfig): Agent {
+  const { onPermissionRequest, ...clientOptions } = config.providerOptions ?? {}
   const client = new CopilotClient({
+    ...clientOptions,
     cwd: config.cwd,
     env: config.env,
-    ...(config.providerOptions as Record<string, unknown>),
   })
 
   function run<T = string>(options: RunOptions<T>): RunHandle<T> {
@@ -268,10 +286,7 @@ export function createCopilotAgent(config: AgentConfig): Agent {
         onPermissionRequest: getPermissionHandler(config),
         workingDirectory: config.cwd,
         streaming: options?.streaming ?? false,
-        mcpServers: config.mcpServers as Record<
-          string,
-          import("@github/copilot-sdk").MCPServerConfig
-        >,
+        mcpServers: translateMcpServers(config.mcpServers),
       })
 
       const prompt = buildPrompt(options)

@@ -11,9 +11,10 @@ import {
 import { renderMessages, runWithEvents, tryParseOutput } from "./agent.ts"
 import type {
   Agent,
-  AgentConfig,
   AgentEvent,
   AgentStats,
+  CodexAgentConfig,
+  CodexProviderOptions,
   ErrorCode,
   McpServerConfig,
   RawEvent,
@@ -26,13 +27,6 @@ type CodexConfigValue = string | number | boolean | CodexConfigValue[] | CodexCo
 type CodexConfigObject = {
   [key: string]: CodexConfigValue
 }
-
-type CodexProviderOptions = Partial<CodexOptions & CodexThreadOptions> &
-  Record<string, unknown> & {
-    defaultPermissions?: string
-    permissions?: CodexConfigObject
-    sandboxWorkspaceWrite?: CodexConfigObject
-  }
 
 interface ToolState {
   name: string
@@ -54,11 +48,13 @@ interface RunState {
 
 interface CodexRunContext {
   codexClient: Codex
-  config: AgentConfig
+  config: CodexAgentConfig
   providerOptions: CodexProviderOptions
 }
 
-export function createCodexAgent(config: AgentConfig): Agent {
+// Agent construction
+
+export function createCodexAgent(config: CodexAgentConfig): Agent {
   const providerOptions: CodexProviderOptions = config.providerOptions ?? {}
   const codexClient = new Codex(buildCodexClientOptions(config, providerOptions))
 
@@ -70,12 +66,28 @@ export function createCodexAgent(config: AgentConfig): Agent {
   }
 }
 
+// Run lifecycle
+
 function runCodexAgent<T = string>(options: RunOptions<T>, context: CodexRunContext): RunHandle<T> {
   const state = createRunState()
   const { promise, resolve, reject } = Promise.withResolvers<T>()
   const events = streamCodexThreadEvents(options, state, context, resolve, reject)
 
   return runWithEvents(events, promise, reject)
+}
+
+function createRunState(): RunState {
+  return {
+    startTime: Date.now(),
+    hasError: false,
+    lastErrorMessage: undefined,
+    messageContent: "",
+    reasoningContent: "",
+    messagesById: new Map(),
+    reasoningById: new Map(),
+    tools: new Map(),
+    stats: { tokens: {} },
+  }
 }
 
 async function* streamCodexThreadEvents<T>(
@@ -100,8 +112,8 @@ async function* runCodexThread<T>(
   state: RunState,
   context: CodexRunContext,
 ): AsyncGenerator<AgentEvent, void> {
-  const { config, codexClient, providerOptions } = context
-  const thread = codexClient.startThread(buildCodexThreadOptions(config, providerOptions))
+  const { config, codexClient } = context
+  const thread = codexClient.startThread(buildCodexThreadOptions(config))
   const prompt = renderMessages(options.messages)
   const { events } = await thread.runStreamed(prompt, {
     outputSchema: options.outputSchema?.toJSONSchema(),
@@ -150,75 +162,58 @@ function closeCodexAgent(): Promise<void> {
   return Promise.resolve()
 }
 
-function createRawEvent(event: ThreadEvent): RawEvent<ThreadEvent> {
-  return {
-    type: "raw",
-    timestamp: Date.now(),
-    provider: "codex",
-    data: event,
+// Event mapping
+
+function mapCodexEvent(event: ThreadEvent, state: RunState): AgentEvent[] {
+  switch (event.type) {
+    case "thread.started":
+    case "turn.started":
+      return []
+    case "turn.completed":
+      return [mapUsageToStats(event.usage, state)]
+    case "turn.failed":
+      state.hasError = true
+      state.lastErrorMessage = event.error.message
+      return [createErrorEvent("PROVIDER_ERROR", event.error.message)]
+    case "error":
+      state.hasError = true
+      state.lastErrorMessage = event.message
+      return [createErrorEvent("PROVIDER_ERROR", event.message)]
+    case "item.started":
+    case "item.updated":
+    case "item.completed":
+      return mapItemEvent(event, state)
+    default:
+      return []
   }
 }
 
-function createRunError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
-}
+function mapItemEvent(
+  itemEvent: Extract<ThreadEvent, { type: "item.started" | "item.updated" | "item.completed" }>,
+  state: RunState,
+): AgentEvent[] {
+  const { item, type } = itemEvent
 
-function getErrorCode(error: Error): ErrorCode {
-  return error.name === "AbortError" ? "ABORTED" : "PROVIDER_ERROR"
-}
-
-function createRunState(): RunState {
-  return {
-    startTime: Date.now(),
-    hasError: false,
-    lastErrorMessage: undefined,
-    messageContent: "",
-    reasoningContent: "",
-    messagesById: new Map(),
-    reasoningById: new Map(),
-    tools: new Map(),
-    stats: { tokens: {} },
+  switch (item.type) {
+    case "agent_message":
+      return mapAgentMessage(item, type, state)
+    case "reasoning":
+      return mapReasoning(item, type, state)
+    case "command_execution":
+      return mapCommandExecution(item, type, state)
+    case "file_change":
+      return type === "item.completed" ? mapFileChange(item) : []
+    case "mcp_tool_call":
+      return mapMcpToolCall(item, type, state)
+    case "web_search":
+      return mapWebSearch(item, type, state)
+    case "todo_list":
+      return mapTodoList(item, type, state)
+    case "error":
+      return [createErrorEvent("PROVIDER_ERROR", item.message, true)]
+    default:
+      return []
   }
-}
-
-function createErrorEvent(code: ErrorCode, message: string, recoverable = false): AgentEvent {
-  return {
-    type: "error",
-    timestamp: Date.now(),
-    data: { code, message, recoverable },
-  }
-}
-
-function mapUsageToStats(usage: Usage, state: RunState): AgentEvent {
-  const input = usage.input_tokens
-  const output = usage.output_tokens
-  state.stats.tokens = {
-    input,
-    output,
-    total: input + output,
-  }
-  return { type: "stats.updated", timestamp: Date.now(), data: state.stats }
-}
-
-function computeDelta(id: string, text: string, store: Map<string, string>): string {
-  const previous = store.get(id) ?? ""
-  const delta = text.slice(previous.length)
-  store.set(id, text)
-  return delta
-}
-
-function createToolState(name: string, kind: ToolState["kind"]): ToolState {
-  return { name, kind, lastOutput: "" }
-}
-
-function normalizeToolInput(value: unknown): Record<string, unknown> | undefined {
-  if (isRecord(value)) {
-    return value
-  }
-  if (value === undefined) {
-    return undefined
-  }
-  return { value }
 }
 
 function mapAgentMessage(
@@ -347,16 +342,6 @@ function mapCommandExecution(
   }
 
   return events
-}
-
-function serializeMcpResult(item: McpToolCallItem): string | undefined {
-  if (item.result?.structured_content) {
-    return JSON.stringify(item.result.structured_content)
-  }
-  if (item.result?.content) {
-    return JSON.stringify(item.result.content)
-  }
-  return undefined
 }
 
 function mapMcpToolCall(
@@ -508,146 +493,101 @@ function mapTodoList(
   ]
 }
 
-function mapItemEvent(
-  itemEvent: Extract<ThreadEvent, { type: "item.started" | "item.updated" | "item.completed" }>,
-  state: RunState,
-): AgentEvent[] {
-  const { item, type } = itemEvent
+function mapUsageToStats(usage: Usage, state: RunState): AgentEvent {
+  const input = usage.input_tokens
+  const output = usage.output_tokens
+  state.stats.tokens = {
+    input,
+    output,
+    total: input + output,
+  }
+  return { type: "stats.updated", timestamp: Date.now(), data: state.stats }
+}
 
-  switch (item.type) {
-    case "agent_message":
-      return mapAgentMessage(item, type, state)
-    case "reasoning":
-      return mapReasoning(item, type, state)
-    case "command_execution":
-      return mapCommandExecution(item, type, state)
-    case "file_change":
-      return type === "item.completed" ? mapFileChange(item) : []
-    case "mcp_tool_call":
-      return mapMcpToolCall(item, type, state)
-    case "web_search":
-      return mapWebSearch(item, type, state)
-    case "todo_list":
-      return mapTodoList(item, type, state)
-    case "error":
-      return [createErrorEvent("PROVIDER_ERROR", item.message, true)]
-    default:
-      return []
+// Event factories
+
+function createRawEvent(event: ThreadEvent): RawEvent<ThreadEvent> {
+  return {
+    type: "raw",
+    timestamp: Date.now(),
+    provider: "codex",
+    data: event,
   }
 }
 
-function mapCodexEvent(event: ThreadEvent, state: RunState): AgentEvent[] {
-  switch (event.type) {
-    case "thread.started":
-    case "turn.started":
-      return []
-    case "turn.completed":
-      return [mapUsageToStats(event.usage, state)]
-    case "turn.failed":
-      state.hasError = true
-      state.lastErrorMessage = event.error.message
-      return [createErrorEvent("PROVIDER_ERROR", event.error.message)]
-    case "error":
-      state.hasError = true
-      state.lastErrorMessage = event.message
-      return [createErrorEvent("PROVIDER_ERROR", event.message)]
-    case "item.started":
-    case "item.updated":
-    case "item.completed":
-      return mapItemEvent(event, state)
-    default:
-      return []
+function createErrorEvent(code: ErrorCode, message: string, recoverable = false): AgentEvent {
+  return {
+    type: "error",
+    timestamp: Date.now(),
+    data: { code, message, recoverable },
   }
 }
 
 const formatParseError = (error: Error): AgentEvent =>
   createErrorEvent("PARSE_ERROR", `Failed to parse output: ${error.message}`)
 
+// Codex configuration
+
 function buildCodexClientOptions(
-  config: AgentConfig,
+  config: CodexAgentConfig,
   providerOptions: CodexProviderOptions,
 ): CodexOptions {
-  const codexConfig = buildCodexConfig(providerOptions, config.mcpServers)
+  const codexConfig = buildCodexConfig(providerOptions.config, config.mcpServers)
   return {
     apiKey: providerOptions.apiKey,
     baseUrl: providerOptions.baseUrl,
     codexPathOverride: providerOptions.codexPathOverride,
-    env: config.env ?? providerOptions.env,
+    env: buildCodexEnv(config.env, providerOptions.env),
     config: hasObjectKeys(codexConfig) ? codexConfig : undefined,
   }
 }
 
-function buildCodexThreadOptions(
-  config: AgentConfig,
-  providerOptions: CodexProviderOptions,
-): CodexThreadOptions {
+function buildCodexEnv(
+  configEnv?: Record<string, string>,
+  providerEnv?: Record<string, string>,
+): Record<string, string> | undefined {
+  if (!configEnv && !providerEnv) {
+    return undefined
+  }
+
+  return { ...getProcessEnv(), ...providerEnv, ...configEnv }
+}
+
+function getProcessEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) {
+      env[key] = value
+    }
+  }
+  return env
+}
+
+function buildCodexThreadOptions(config: CodexAgentConfig): CodexThreadOptions {
   return {
-    model: config.model ?? providerOptions.model,
-    workingDirectory: config.cwd ?? providerOptions.workingDirectory,
-    skipGitRepoCheck: providerOptions.skipGitRepoCheck,
-    modelReasoningEffort: providerOptions.modelReasoningEffort,
-    networkAccessEnabled: providerOptions.networkAccessEnabled,
-    webSearchMode: providerOptions.webSearchMode,
-    webSearchEnabled: providerOptions.webSearchEnabled,
-    approvalPolicy: getApprovalPolicy(providerOptions),
-    sandboxMode: getSandboxMode(providerOptions),
-    additionalDirectories: providerOptions.additionalDirectories,
+    model: config.model ?? config.providerOptions?.model,
+    workingDirectory: config.cwd ?? config.providerOptions?.workingDirectory,
+    skipGitRepoCheck: config.providerOptions?.skipGitRepoCheck,
+    modelReasoningEffort: config.providerOptions?.modelReasoningEffort,
+    networkAccessEnabled: config.providerOptions?.networkAccessEnabled,
+    webSearchMode: config.providerOptions?.webSearchMode,
+    webSearchEnabled: config.providerOptions?.webSearchEnabled,
+    approvalPolicy: config.providerOptions?.approvalPolicy,
+    sandboxMode: config.providerOptions?.sandboxMode,
+    additionalDirectories: config.providerOptions?.additionalDirectories,
   }
 }
 
 function buildCodexConfig(
-  providerOptions: CodexProviderOptions,
+  providerConfig?: CodexConfigObject,
   mcpServers?: Record<string, McpServerConfig>,
 ): CodexConfigObject {
-  const codexConfig: CodexConfigObject = { ...(providerOptions.config ?? {}) }
-
-  if (providerOptions.defaultPermissions) {
-    codexConfig.default_permissions = providerOptions.defaultPermissions
-  }
-  if (providerOptions.permissions) {
-    codexConfig.permissions = providerOptions.permissions
-  }
-  if (providerOptions.sandboxWorkspaceWrite) {
-    codexConfig.sandbox_workspace_write = providerOptions.sandboxWorkspaceWrite
-  }
-
-  const translatedMcpServers = translateMcpServers(mcpServers)
-  if (hasObjectKeys(translatedMcpServers)) {
-    const configuredMcpServers = isConfigObject(codexConfig.mcp_servers)
-      ? codexConfig.mcp_servers
-      : {}
-    codexConfig.mcp_servers = { ...configuredMcpServers, ...translatedMcpServers }
+  const codexConfig: CodexConfigObject = { ...(providerConfig ?? {}) }
+  if (mcpServers) {
+    codexConfig.mcp_servers = translateMcpServers(mcpServers)
   }
 
   return codexConfig
-}
-
-function getApprovalPolicy(
-  providerOptions: CodexProviderOptions,
-): CodexThreadOptions["approvalPolicy"] {
-  if (providerOptions.approvalPolicy) {
-    return providerOptions.approvalPolicy
-  }
-  if (hasConfigValue(providerOptions.config, "approval_policy")) {
-    return undefined
-  }
-  return "never"
-}
-
-function getSandboxMode(providerOptions: CodexProviderOptions): CodexThreadOptions["sandboxMode"] {
-  if (providerOptions.sandboxMode) {
-    return providerOptions.sandboxMode
-  }
-  if (hasConfigValue(providerOptions.config, "sandbox_mode")) {
-    return undefined
-  }
-  if (
-    providerOptions.defaultPermissions ||
-    hasConfigValue(providerOptions.config, "default_permissions")
-  ) {
-    return undefined
-  }
-  return "workspace-write"
 }
 
 function translateMcpServers(mcpServers?: Record<string, McpServerConfig>): CodexConfigObject {
@@ -657,40 +597,77 @@ function translateMcpServers(mcpServers?: Record<string, McpServerConfig>): Code
   }
 
   for (const [name, server] of Object.entries(mcpServers)) {
-    const codexServer: CodexConfigObject = { enabled: true }
-    if ("url" in server) {
-      codexServer.url = server.url
-      if (server.headers) {
-        codexServer.http_headers = server.headers
-      }
-    } else {
-      codexServer.command = server.command
-      if (server.args) {
-        codexServer.args = server.args
-      }
-      if (server.env) {
-        codexServer.env = server.env
-      }
-    }
-    if (server.tools.length > 0) {
-      codexServer.enabled_tools = server.tools
-    }
-    codexMcpServers[name] = codexServer
+    codexMcpServers[name] = translateMcpServer(server)
   }
 
   return codexMcpServers
 }
 
-function hasConfigValue(config: CodexConfigObject | undefined, key: string): boolean {
-  return config?.[key] !== undefined
+function translateMcpServer(server: McpServerConfig): CodexConfigObject {
+  const codexServer: CodexConfigObject = { enabled: server.enabled }
+  if ("url" in server) {
+    codexServer.url = server.url
+    if (server.headers) {
+      codexServer.http_headers = server.headers
+    }
+  } else {
+    codexServer.command = server.command
+    if (server.args) {
+      codexServer.args = server.args
+    }
+    if (server.env) {
+      codexServer.env = server.env
+    }
+  }
+  if (server.tools.length > 0) {
+    codexServer.enabled_tools = server.tools
+  }
+  return codexServer
+}
+
+// Utilities
+
+function createRunError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
+}
+
+function getErrorCode(error: Error): ErrorCode {
+  return error.name === "AbortError" ? "ABORTED" : "PROVIDER_ERROR"
+}
+
+function computeDelta(id: string, text: string, store: Map<string, string>): string {
+  const previous = store.get(id) ?? ""
+  const delta = text.slice(previous.length)
+  store.set(id, text)
+  return delta
+}
+
+function createToolState(name: string, kind: ToolState["kind"]): ToolState {
+  return { name, kind, lastOutput: "" }
+}
+
+function serializeMcpResult(item: McpToolCallItem): string | undefined {
+  if (item.result?.structured_content) {
+    return JSON.stringify(item.result.structured_content)
+  }
+  if (item.result?.content) {
+    return JSON.stringify(item.result.content)
+  }
+  return undefined
+}
+
+function normalizeToolInput(value: unknown): Record<string, unknown> | undefined {
+  if (isRecord(value)) {
+    return value
+  }
+  if (value === undefined) {
+    return undefined
+  }
+  return { value }
 }
 
 function hasObjectKeys(value: CodexConfigObject): boolean {
   return Object.keys(value).length > 0
-}
-
-function isConfigObject(value: unknown): value is CodexConfigObject {
-  return isRecord(value)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

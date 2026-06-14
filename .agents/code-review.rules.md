@@ -13,3 +13,4 @@
 
 - Security
 - Performance
+- `/scripts` - scripts for local testing
