@@ -23,23 +23,22 @@ Read these before implementing:
 
 ## Implementation rules
 
+- Use officeial documentation and codebase (if available) to understand provider behavior, interfaces, APIs, enums, etc.
 - Prefer official SDKs over CLI wrappers when SDKs expose streaming, cancellation, tools, or structured output.
 - Use CLI/headless mode only when no stable SDK is available.
 - Keep wrappers thin: translate API shapes, do not build a second runtime.
 - Preserve raw provider events only when `emitRawEvents` is true.
 - Resolve the run promise only after provider completion and output parsing succeeds.
 - Yield an `error` event and reject on provider errors, aborts, or parse failures.
-- Use `providerOptions` as an escape hatch; avoid speculative public options.
-- Omit optional event fields when unavailable instead of inventing values.
 
 ## Event mapping
 
 Map provider events into the local union:
 - Assistant text → `message.delta` / `message.completed`.
 - Reasoning or thinking → `reasoning.delta` / `reasoning.completed`.
-- Built-in tools → `tool.started`, `tool.progress`, `tool.completed` with `kind: "builtin"`.
-- MCP tools → tool events with `kind: "mcp"` and `mcp: { server, tool }`.
-- File edits → `file.changed` with `add`, `modify`, or `delete`.
+- Built-in tools → `tool.started`, `tool.progress`, `tool.completed` with `data.toolType` and stage-appropriate `data.details`.
+- MCP tools → tool events with `data.toolType: "mcp"` and `data.details.server` / `data.details.tool`.
+- File edits → tool events with `data.toolType: "file"` and changed paths in `data.details.changes`.
 - Usage, context, cost, or duration → `stats.updated`.
 - Failures → `error` with the closest local error code.
 
@@ -91,18 +90,7 @@ Use local `McpServerConfig` as the source shape and translate inside the wrapper
 - Local docs: `/home/niko/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/docs/sdk.md`
 - Prefer the SDK from `@earendil-works/pi-coding-agent`.
 
-## Research checklist
+## Checklist
 
-Before adding or changing a provider:
-1. Read official docs, README, and package/source event types.
-2. Confirm install name, auth, cwd/env support, cancellation, MCP, and structured output.
-3. Compare provider events to `AgentEvent` and implement only the needed mapping.
-4. Prefer current package types/source over stale docs when they conflict.
-
-## Validation
-
-Run the narrowest relevant checks:
-- Type-check the project.
-- Run existing agent tests if present.
-- Smoke test text output, `outputSchema`, `abortSignal`, raw events, and `close()` when credentials/binaries are available.
-- Report skipped checks with the reason.
+- [ ] Used provider api calls, events, enums exists in the official documentation or the codebase, NEVER guess or infer them.
+- [ ] All provider events are properly mapped to local events. If not strictly typed (any, unknown) - check for actual values in the provider codebase.
