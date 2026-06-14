@@ -1,5 +1,11 @@
 # serfs
 
+## 0.3.0
+
+### Minor Changes
+
+- 11fa02e: Enhance agent events mapping
+
 ## 0.2.1
 
 ### Patch Changes
