@@ -4,3 +4,5 @@ dist/
 .DS_Store
 *.tsbuildinfo
 scripts/demo.ts
+.codex/
+agent-events.jsonl

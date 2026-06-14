@@ -1,3 +1,8 @@
+import type {
+  CopilotClientOptions,
+  PermissionHandler as CopilotPermissionHandler,
+} from "@github/copilot-sdk"
+import type { CodexOptions, ThreadOptions as CodexThreadOptions } from "@openai/codex-sdk"
 import type { z } from "zod"
 
 // ============================================
@@ -18,22 +23,59 @@ export type Provider = "copilot" | "codex" | "opencode" | "claude"
 
 export type McpServerConfig =
   | {
+      enabled: boolean
       type?: "stdio"
       command: string
       tools: string[]
       args?: string[]
       env?: Record<string, string>
     }
-  | { type: "http" | "sse"; url: string; tools: string[]; headers?: Record<string, string> }
+  | {
+      enabled: boolean
+      type: "http" | "sse"
+      url: string
+      tools: string[]
+      headers?: Record<string, string>
+    }
 
-export interface AgentConfig {
-  provider: Provider
+export type CodexProviderOptions = CodexOptions & CodexThreadOptions
+
+export type CopilotProviderOptions = CopilotClientOptions & {
+  onPermissionRequest?: CopilotPermissionHandler
+}
+
+export interface BaseAgentConfig {
   model: string
   cwd?: string
   env?: Record<string, string>
   mcpServers?: Record<string, McpServerConfig>
-  providerOptions?: Record<string, unknown>
 }
+
+export interface CodexAgentConfig extends BaseAgentConfig {
+  provider: "codex"
+  providerOptions?: CodexProviderOptions
+}
+
+export interface CopilotAgentConfig extends BaseAgentConfig {
+  provider: "copilot"
+  providerOptions?: CopilotProviderOptions
+}
+
+export interface OpenCodeAgentConfig extends BaseAgentConfig {
+  provider: "opencode"
+  providerOptions?: never
+}
+
+export interface ClaudeAgentConfig extends BaseAgentConfig {
+  provider: "claude"
+  providerOptions?: never
+}
+
+export type AgentConfig =
+  | CodexAgentConfig
+  | CopilotAgentConfig
+  | OpenCodeAgentConfig
+  | ClaudeAgentConfig
 
 // ============================================
 // RUN OPTIONS & HANDLE

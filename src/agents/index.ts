@@ -30,9 +30,6 @@ export function createAgent(config: AgentConfig): Agent {
 
     case "claude":
       throw new Error("Claude adapter not implemented yet")
-
-    default:
-      throw new Error(`Unknown provider: ${config.provider}`)
   }
 }
 
