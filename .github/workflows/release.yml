@@ -39,7 +39,8 @@ jobs:
         run: |
           npm whoami
           npm view serfs-ai name version maintainers
-          npm access ls-collaborators serfs-ai
+          npm access list collaborators serfs-ai
+          npm access get status serfs-ai
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
