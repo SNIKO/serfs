@@ -2,6 +2,14 @@
   "name": "serfs-ai",
   "version": "0.2.0",
   "type": "module",
+  "homepage": "https://github.com/SNIKO/serfs#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SNIKO/serfs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SNIKO/serfs/issues"
+  },
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
