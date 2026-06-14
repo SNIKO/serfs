@@ -1,5 +1,11 @@
 # serfs
 
+## 0.2.0
+
+### Minor Changes
+
+- b9966f7: Change package name serfs -> serfs-ai
+
 ## 0.1.0
 
 ### Minor Changes
