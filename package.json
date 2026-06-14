@@ -33,7 +33,7 @@
     "fix": "biome check --write .",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "bun run build && npm publish --access public --provenance=false"
+    "release": "bun run build && (npm view \"$npm_package_name@$npm_package_version\" version >/dev/null 2>&1 && echo \"$npm_package_name@$npm_package_version is already published\" || npm publish --access public --provenance=false)"
   },
   "devDependencies": {
     "@biomejs/biome": "latest",
