@@ -35,6 +35,15 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      - name: Debug npm auth
+        run: |
+          npm whoami
+          npm view serfs-ai name version maintainers
+          npm access ls-collaborators serfs-ai
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Create Release PR or Publish
         uses: changesets/action@v1
         with:
