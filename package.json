@@ -1,5 +1,5 @@
 {
-  "name": "serfs",
+  "name": "serfs-ai",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
