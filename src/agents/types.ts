@@ -134,6 +134,8 @@ export interface AgentStats {
     input?: number
     output?: number
     total?: number
+    cachedInput?: number
+    reasoningOutput?: number
   }
   context?: {
     contextSize?: number
@@ -180,7 +182,6 @@ export interface MessageCompletedEvent extends EventBase {
 export interface ReasoningDeltaEvent extends EventBase {
   type: "reasoning.delta"
   data: {
-    reasoningId: string
     delta: string
   }
 }
@@ -188,23 +189,130 @@ export interface ReasoningDeltaEvent extends EventBase {
 export interface ReasoningCompletedEvent extends EventBase {
   type: "reasoning.completed"
   data: {
-    reasoningId: string
     content: string
   }
 }
 
 // Tools
-export type ToolKind = "builtin" | "mcp"
+export type ToolType = "shell" | "file" | "mcp" | "web" | "other"
+
+export type ToolStartedDetails =
+  | ShellToolStartedDetails
+  | FileToolStartedDetails
+  | McpToolStartedDetails
+  | WebToolDetails
+  | OtherToolStartedDetails
+
+export type ToolProgressDetails = ShellToolProgressDetails | OtherToolProgressDetails
+
+export type ToolCompletedDetails =
+  | ShellToolCompletedDetails
+  | FileToolCompletedDetails
+  | McpToolCompletedDetails
+  | WebToolDetails
+  | OtherToolCompletedDetails
+
+export type ToolDetails = ToolStartedDetails | ToolProgressDetails | ToolCompletedDetails
+
+export interface ShellToolStartedDetails {
+  command: string
+}
+
+export interface ShellToolProgressDetails {
+  output: string
+}
+
+export interface ShellToolCompletedDetails {
+  command: string
+  output?: string
+  exitCode?: number | null
+}
+
+export type FileOperationKind = "view" | "add" | "update" | "delete"
+
+export interface FileOperation {
+  path: string
+  kind: FileOperationKind
+}
+
+export interface FileToolStartedDetails {
+  operations: FileOperation[]
+}
+
+export interface FileToolCompletedDetails extends FileToolStartedDetails {
+  output?: unknown
+  errorMessage?: string
+}
+
+export interface McpToolError {
+  message: string
+  [key: string]: unknown
+}
+
+export interface McpToolStartedDetails {
+  server: string
+  tool: string
+  arguments?: unknown
+}
+
+export interface McpToolCompletedDetails {
+  server: string
+  tool: string
+  arguments?: unknown
+  result?: unknown
+  error?: McpToolError
+  errorMessage?: string
+}
+
+export type WebSearchAction = "search" | "open" | "other"
+
+export type WebToolStartedDetails =
+  | { action: "search"; query: string }
+  | { action: "open"; url: string }
+  | { action: "other"; input: unknown }
+
+export type WebToolCompletedDetails = WebToolStartedDetails & {
+  output?: unknown
+  errorMessage?: string
+}
+
+export type WebToolDetails = WebToolStartedDetails
+
+export interface OtherToolStartedDetails {
+  name?: string
+  input?: unknown
+}
+
+export interface OtherToolProgressDetails {
+  name?: string
+  output?: unknown
+}
+
+export interface OtherToolCompletedDetails {
+  name?: string
+  input?: unknown
+  output?: unknown
+}
+
+export interface ToolStartedDetailsByType {
+  shell: ShellToolStartedDetails
+  file: FileToolStartedDetails
+  mcp: McpToolStartedDetails
+  web: WebToolStartedDetails
+  other: OtherToolStartedDetails
+}
+
+export type ToolStartedData<T extends ToolType = ToolType> = {
+  [K in T]: {
+    toolId: string
+    toolType: K
+    details: ToolStartedDetailsByType[K]
+  }
+}[T]
 
 export interface ToolStartedEvent extends EventBase {
   type: "tool.started"
-  data: {
-    toolId: string
-    name: string
-    kind: ToolKind
-    input?: Record<string, unknown>
-    mcp?: { server: string; tool: string }
-  }
+  data: ToolStartedData
 }
 
 export interface ToolProgressEvent extends EventBase {
@@ -212,28 +320,30 @@ export interface ToolProgressEvent extends EventBase {
   data: {
     toolId: string
     message: string
+    details?: ToolProgressDetails
   }
 }
+
+export interface ToolCompletedDetailsByType {
+  shell: ShellToolCompletedDetails
+  file: FileToolCompletedDetails
+  mcp: McpToolCompletedDetails
+  web: WebToolCompletedDetails
+  other: OtherToolCompletedDetails
+}
+
+export type ToolCompletedData<T extends ToolType = ToolType> = {
+  [K in T]: {
+    toolId: string
+    toolType: K
+    success: boolean
+    details: ToolCompletedDetailsByType[K]
+  }
+}[T]
 
 export interface ToolCompletedEvent extends EventBase {
   type: "tool.completed"
-  data: {
-    toolId: string
-    name: string
-    success: boolean
-    output?: string
-    error?: string
-  }
-}
-
-// Files
-export type FileChangeKind = "add" | "modify" | "delete"
-
-export interface FileChangedEvent extends EventBase {
-  type: "file.changed"
-  data: {
-    changes: Array<{ path: string; kind: FileChangeKind }>
-  }
+  data: ToolCompletedData
 }
 
 // Stats
@@ -264,6 +374,5 @@ export type AgentEvent =
   | ToolStartedEvent
   | ToolProgressEvent
   | ToolCompletedEvent
-  | FileChangedEvent
   | StatsUpdatedEvent
   | AgentErrorEvent

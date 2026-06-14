@@ -16,10 +16,22 @@ import type {
   CodexAgentConfig,
   CodexProviderOptions,
   ErrorCode,
+  FileToolCompletedDetails,
+  FileToolStartedDetails,
   McpServerConfig,
+  McpToolCompletedDetails,
+  McpToolError,
+  McpToolStartedDetails,
+  OtherToolCompletedDetails,
+  OtherToolProgressDetails,
+  OtherToolStartedDetails,
   RawEvent,
   RunHandle,
   RunOptions,
+  ShellToolCompletedDetails,
+  ShellToolProgressDetails,
+  ShellToolStartedDetails,
+  WebToolDetails,
 } from "./types.ts"
 
 type CodexConfigValue = string | number | boolean | CodexConfigValue[] | CodexConfigObject
@@ -29,8 +41,6 @@ type CodexConfigObject = {
 }
 
 interface ToolState {
-  name: string
-  kind: "builtin" | "mcp"
   lastOutput: string
 }
 
@@ -39,9 +49,6 @@ interface RunState {
   hasError: boolean
   lastErrorMessage?: string
   messageContent: string
-  reasoningContent: string
-  messagesById: Map<string, string>
-  reasoningById: Map<string, string>
   tools: Map<string, ToolState>
   stats: AgentStats
 }
@@ -82,9 +89,6 @@ function createRunState(): RunState {
     hasError: false,
     lastErrorMessage: undefined,
     messageContent: "",
-    reasoningContent: "",
-    messagesById: new Map(),
-    reasoningById: new Map(),
     tools: new Map(),
     stats: { tokens: {} },
   }
@@ -202,7 +206,7 @@ function mapItemEvent(
     case "command_execution":
       return mapCommandExecution(item, type, state)
     case "file_change":
-      return type === "item.completed" ? mapFileChange(item) : []
+      return mapFileChange(item, type, state)
     case "mcp_tool_call":
       return mapMcpToolCall(item, type, state)
     case "web_search":
@@ -212,7 +216,7 @@ function mapItemEvent(
     case "error":
       return [createErrorEvent("PROVIDER_ERROR", item.message, true)]
     default:
-      return []
+      return mapUnknownItem(item, type, state)
   }
 }
 
@@ -221,59 +225,42 @@ function mapAgentMessage(
   phase: "item.started" | "item.updated" | "item.completed",
   state: RunState,
 ): AgentEvent[] {
-  const events: AgentEvent[] = []
-  const ts = Date.now()
-  const delta = computeDelta(item.id, item.text, state.messagesById)
-
-  if (delta) {
-    state.messageContent = item.text
-    events.push({
-      type: "message.delta",
-      timestamp: ts,
-      data: { messageId: item.id, delta },
-    })
+  if (phase !== "item.completed") {
+    return []
   }
 
-  if (phase === "item.completed") {
-    state.messageContent = item.text
-    events.push({
+  state.messageContent = item.text
+  if (!item.text) {
+    return []
+  }
+  return [
+    {
       type: "message.completed",
-      timestamp: ts,
+      timestamp: Date.now(),
       data: { messageId: item.id, content: item.text },
-    })
-  }
-
-  return events
+    },
+  ]
 }
 
 function mapReasoning(
   item: Extract<ThreadItem, { type: "reasoning" }>,
   phase: "item.started" | "item.updated" | "item.completed",
-  state: RunState,
+  _state: RunState,
 ): AgentEvent[] {
-  const events: AgentEvent[] = []
-  const ts = Date.now()
-  const delta = computeDelta(item.id, item.text, state.reasoningById)
-
-  if (delta) {
-    state.reasoningContent = item.text
-    events.push({
-      type: "reasoning.delta",
-      timestamp: ts,
-      data: { reasoningId: item.id, delta },
-    })
+  if (phase !== "item.completed") {
+    return []
   }
 
-  if (phase === "item.completed") {
-    state.reasoningContent = item.text
-    events.push({
+  if (!item.text) {
+    return []
+  }
+  return [
+    {
       type: "reasoning.completed",
-      timestamp: ts,
-      data: { reasoningId: item.id, content: item.text },
-    })
-  }
-
-  return events
+      timestamp: Date.now(),
+      data: { content: item.text },
+    },
+  ]
 }
 
 function mapCommandExecution(
@@ -283,7 +270,7 @@ function mapCommandExecution(
 ): AgentEvent[] {
   const events: AgentEvent[] = []
   const ts = Date.now()
-  const existing = state.tools.get(item.id) ?? createToolState(item.command, "builtin")
+  const existing = state.tools.get(item.id) ?? createToolState()
 
   if (!state.tools.has(item.id)) {
     state.tools.set(item.id, existing)
@@ -294,9 +281,8 @@ function mapCommandExecution(
         timestamp: ts,
         data: {
           toolId: item.id,
-          name: existing.name,
-          kind: "builtin",
-          input: { command: item.command },
+          toolType: "shell",
+          details: buildShellStartedDetails(item),
         },
       },
       { type: "stats.updated", timestamp: ts, data: state.stats },
@@ -304,39 +290,33 @@ function mapCommandExecution(
   }
 
   const output = item.aggregated_output ?? ""
-  if (phase === "item.updated" || phase === "item.completed") {
+  if (phase === "item.updated") {
     const delta = output.slice(existing.lastOutput.length)
     if (delta) {
       existing.lastOutput = output
       events.push({
         type: "tool.progress",
         timestamp: ts,
-        data: { toolId: item.id, message: delta },
+        data: {
+          toolId: item.id,
+          message: delta,
+          details: buildShellProgressDetails(delta),
+        },
       })
     }
   }
 
   if (phase === "item.completed") {
     const success = item.status === "completed"
-    let error: string | undefined
-    if (success) {
-      error = undefined
-    } else if (item.exit_code === undefined) {
-      error = "Command failed"
-    } else {
-      error = `Command failed (exit code ${item.exit_code})`
-    }
-
     state.tools.delete(item.id)
     events.push({
       type: "tool.completed",
       timestamp: ts,
       data: {
         toolId: item.id,
-        name: existing.name,
+        toolType: "shell",
         success,
-        output: output || undefined,
-        error,
+        details: buildShellCompletedDetails(item),
       },
     })
   }
@@ -351,7 +331,7 @@ function mapMcpToolCall(
 ): AgentEvent[] {
   const events: AgentEvent[] = []
   const ts = Date.now()
-  const existing = state.tools.get(item.id) ?? createToolState(item.tool, "mcp")
+  const existing = state.tools.get(item.id) ?? createToolState()
 
   if (!state.tools.has(item.id)) {
     state.tools.set(item.id, existing)
@@ -362,10 +342,8 @@ function mapMcpToolCall(
         timestamp: ts,
         data: {
           toolId: item.id,
-          name: item.tool,
-          kind: "mcp",
-          input: normalizeToolInput(item.arguments),
-          mcp: { server: item.server, tool: item.tool },
+          toolType: "mcp",
+          details: buildMcpStartedDetails(item),
         },
       },
       { type: "stats.updated", timestamp: ts, data: state.stats },
@@ -380,10 +358,9 @@ function mapMcpToolCall(
       timestamp: ts,
       data: {
         toolId: item.id,
-        name: item.tool,
+        toolType: "mcp",
         success,
-        output: success ? serializeMcpResult(item) : undefined,
-        error: success ? undefined : item.error?.message,
+        details: buildMcpCompletedDetails(item),
       },
     })
   }
@@ -391,29 +368,54 @@ function mapMcpToolCall(
   return events
 }
 
-function mapFileChange(item: Extract<ThreadItem, { type: "file_change" }>): AgentEvent[] {
-  if (item.status === "failed") {
-    return [createErrorEvent("PROVIDER_ERROR", "File change failed", true)]
+function mapFileChange(
+  item: Extract<ThreadItem, { type: "file_change" }>,
+  phase: "item.started" | "item.updated" | "item.completed",
+  state: RunState,
+): AgentEvent[] {
+  const ts = Date.now()
+  const details = buildFileChangeDetails(item)
+
+  const events: AgentEvent[] = []
+  if (!state.tools.has(item.id)) {
+    state.tools.set(item.id, createToolState())
+    state.stats.toolCalls = (state.stats.toolCalls ?? 0) + 1
+    events.push(
+      {
+        type: "tool.started",
+        timestamp: ts,
+        data: {
+          toolId: item.id,
+          toolType: "file",
+          details,
+        },
+      },
+      { type: "stats.updated", timestamp: ts, data: state.stats },
+    )
   }
 
-  return [
-    {
-      type: "file.changed",
-      timestamp: Date.now(),
-      data: {
-        changes: item.changes.map((change) => {
-          const kindMap: Record<string, "delete" | "add" | "modify"> = {
-            delete: "delete",
-            add: "add",
-          }
-          return {
-            path: change.path,
-            kind: kindMap[change.kind] ?? "modify",
-          }
-        }),
-      },
+  if (phase !== "item.completed") {
+    return events
+  }
+
+  state.tools.delete(item.id)
+  const completedEvent: AgentEvent = {
+    type: "tool.completed",
+    timestamp: ts,
+    data: {
+      toolId: item.id,
+      toolType: "file",
+      success: item.status === "completed",
+      details,
     },
-  ]
+  }
+  events.push(completedEvent)
+
+  if (item.status === "failed") {
+    events.push(createErrorEvent("PROVIDER_ERROR", "File change failed", true))
+  }
+
+  return events
 }
 
 function mapWebSearch(
@@ -430,9 +432,8 @@ function mapWebSearch(
         timestamp: ts,
         data: {
           toolId: item.id,
-          name: "web_search",
-          kind: "builtin",
-          input: { query: item.query },
+          toolType: "web",
+          details: buildWebDetails(item),
         },
       },
       { type: "stats.updated", timestamp: ts, data: state.stats },
@@ -444,7 +445,12 @@ function mapWebSearch(
       {
         type: "tool.completed",
         timestamp: ts,
-        data: { toolId: item.id, name: "web_search", success: true, output: item.query },
+        data: {
+          toolId: item.id,
+          toolType: "web",
+          success: true,
+          details: buildWebDetails(item),
+        },
       },
     ]
   }
@@ -468,7 +474,11 @@ function mapTodoList(
       {
         type: "tool.started",
         timestamp: ts,
-        data: { toolId: item.id, name: "todo_list", kind: "builtin", input: { items: item.items } },
+        data: {
+          toolId: item.id,
+          toolType: "other",
+          details: buildTodoStartedDetails(item),
+        },
       },
       { type: "stats.updated", timestamp: ts, data: state.stats },
     ]
@@ -479,7 +489,12 @@ function mapTodoList(
       {
         type: "tool.completed",
         timestamp: ts,
-        data: { toolId: item.id, name: "todo_list", success: true, output: summary },
+        data: {
+          toolId: item.id,
+          toolType: "other",
+          success: true,
+          details: buildTodoCompletedDetails(item, summary),
+        },
       },
     ]
   }
@@ -488,9 +503,55 @@ function mapTodoList(
     {
       type: "tool.progress",
       timestamp: ts,
-      data: { toolId: item.id, message: summary },
+      data: {
+        toolId: item.id,
+        message: summary,
+        details: buildTodoProgressDetails(summary),
+      },
     },
   ]
+}
+
+function mapUnknownItem(
+  item: ThreadItem,
+  phase: "item.started" | "item.updated" | "item.completed",
+  state: RunState,
+): AgentEvent[] {
+  const ts = Date.now()
+  const details = buildUnknownDetails(item)
+
+  if (phase === "item.started") {
+    state.stats.toolCalls = (state.stats.toolCalls ?? 0) + 1
+    return [
+      {
+        type: "tool.started",
+        timestamp: ts,
+        data: {
+          toolId: item.id,
+          toolType: "other",
+          details,
+        },
+      },
+      { type: "stats.updated", timestamp: ts, data: state.stats },
+    ]
+  }
+
+  if (phase === "item.completed") {
+    return [
+      {
+        type: "tool.completed",
+        timestamp: ts,
+        data: {
+          toolId: item.id,
+          toolType: "other",
+          success: true,
+          details,
+        },
+      },
+    ]
+  }
+
+  return []
 }
 
 function mapUsageToStats(usage: Usage, state: RunState): AgentEvent {
@@ -500,6 +561,8 @@ function mapUsageToStats(usage: Usage, state: RunState): AgentEvent {
     input,
     output,
     total: input + output,
+    cachedInput: usage.cached_input_tokens,
+    reasoningOutput: usage.reasoning_output_tokens,
   }
   return { type: "stats.updated", timestamp: Date.now(), data: state.stats }
 }
@@ -627,6 +690,112 @@ function translateMcpServer(server: McpServerConfig): CodexConfigObject {
 
 // Utilities
 
+function buildShellStartedDetails(
+  item: Extract<ThreadItem, { type: "command_execution" }>,
+): ShellToolStartedDetails {
+  return { command: item.command }
+}
+
+function buildShellProgressDetails(output: string): ShellToolProgressDetails {
+  return { output }
+}
+
+function buildShellCompletedDetails(
+  item: Extract<ThreadItem, { type: "command_execution" }>,
+): ShellToolCompletedDetails {
+  const output = item.aggregated_output || undefined
+  return {
+    command: item.command,
+    output,
+    exitCode: item.exit_code ?? null,
+  }
+}
+
+function buildFileChangeDetails(
+  item: Extract<ThreadItem, { type: "file_change" }>,
+): FileToolStartedDetails & FileToolCompletedDetails {
+  return {
+    operations: item.changes.map((change) => ({
+      path: change.path,
+      kind: mapFileChangeKind(change.kind),
+    })),
+  }
+}
+
+function buildMcpStartedDetails(item: McpToolCallItem): McpToolStartedDetails {
+  return {
+    server: item.server,
+    tool: item.tool,
+    arguments: item.arguments,
+  }
+}
+
+function buildMcpCompletedDetails(item: McpToolCallItem): McpToolCompletedDetails {
+  const error = buildMcpToolError(item.error)
+  return {
+    server: item.server,
+    tool: item.tool,
+    arguments: item.arguments,
+    result: item.result,
+    error,
+    errorMessage: error?.message,
+  }
+}
+
+function buildWebDetails(item: Extract<ThreadItem, { type: "web_search" }>): WebToolDetails {
+  const action = getWebSearchAction(item)
+  if (action === "search") {
+    return { action: "search", query: item.query }
+  }
+
+  if (isUrl(item.query)) {
+    return { action: "open", url: item.query }
+  }
+
+  return { action: "other", input: item }
+}
+
+function buildTodoStartedDetails(
+  item: Extract<ThreadItem, { type: "todo_list" }>,
+): OtherToolStartedDetails {
+  return {
+    name: "todo_list",
+    input: { items: item.items },
+  }
+}
+
+function buildTodoProgressDetails(output: string): OtherToolProgressDetails {
+  return { name: "todo_list", output }
+}
+
+function buildTodoCompletedDetails(
+  item: Extract<ThreadItem, { type: "todo_list" }>,
+  output: string,
+): OtherToolCompletedDetails {
+  return {
+    name: "todo_list",
+    input: { items: item.items },
+    output,
+  }
+}
+
+function getWebSearchAction(item: Extract<ThreadItem, { type: "web_search" }>): unknown {
+  // Confirmed exists based on raw events, but not typed in SDK
+  if ("action" in item) {
+    return item.action
+  }
+  return { type: "other" }
+}
+
+function buildUnknownDetails(
+  item: ThreadItem,
+): OtherToolStartedDetails & OtherToolCompletedDetails {
+  return {
+    name: item.type,
+    input: item,
+  }
+}
+
 function createRunError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
 }
@@ -635,41 +804,43 @@ function getErrorCode(error: Error): ErrorCode {
   return error.name === "AbortError" ? "ABORTED" : "PROVIDER_ERROR"
 }
 
-function computeDelta(id: string, text: string, store: Map<string, string>): string {
-  const previous = store.get(id) ?? ""
-  const delta = text.slice(previous.length)
-  store.set(id, text)
-  return delta
+function createToolState(): ToolState {
+  return { lastOutput: "" }
 }
 
-function createToolState(name: string, kind: ToolState["kind"]): ToolState {
-  return { name, kind, lastOutput: "" }
+function mapFileChangeKind(kind: string): "add" | "update" | "delete" {
+  const kindMap: Record<string, "delete" | "add" | "update"> = {
+    delete: "delete",
+    add: "add",
+    update: "update",
+  }
+  return kindMap[kind] ?? "update"
 }
 
-function serializeMcpResult(item: McpToolCallItem): string | undefined {
-  if (item.result?.structured_content) {
-    return JSON.stringify(item.result.structured_content)
-  }
-  if (item.result?.content) {
-    return JSON.stringify(item.result.content)
-  }
-  return undefined
-}
-
-function normalizeToolInput(value: unknown): Record<string, unknown> | undefined {
-  if (isRecord(value)) {
-    return value
-  }
-  if (value === undefined) {
+function buildMcpToolError(error: { message: string } | undefined): McpToolError | undefined {
+  if (!error) {
     return undefined
   }
-  return { value }
+  return error
+}
+
+function getString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function isUrl(value: unknown): boolean {
+  const url = getString(value)
+  if (!url) {
+    return false
+  }
+  try {
+    const parsedUrl = new URL(url)
+    return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:"
+  } catch {
+    return false
+  }
 }
 
 function hasObjectKeys(value: CodexConfigObject): boolean {
   return Object.keys(value).length > 0
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
