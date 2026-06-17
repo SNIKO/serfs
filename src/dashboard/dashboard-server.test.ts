@@ -279,3 +279,104 @@ test("GET /api/flows/:id/jobs returns [] for an unknown flow", async () => {
     await dash.stop()
   }
 })
+
+test("GET …/runs/:runId/steps/:step/log returns NDJSON from the agent log file", async () => {
+  const registry = createFlowRegistry()
+  registry.register(flow("a"))
+  const queue = createJobQueue({ globalLimit: 1 })
+  const events = createEventBus()
+
+  const logContent = '{"type":"text_delta","delta":"hello"}\n'
+
+  await saveState(join(dir, "a", "J1"), {
+    jobId: "J1",
+    flowId: "a",
+    status: "done",
+    startedAt: 1000,
+    totals: { tokens: { input: 0, output: 0 } },
+    runs: [
+      {
+        runId: 0,
+        startedAt: 1000,
+        steps: [
+          {
+            name: "analyze",
+            status: "done",
+            agent: {
+              provider: "anthropic",
+              model: "claude-opus-4-5",
+              tokens: { input: 100, output: 50 },
+              toolCalls: 0,
+              logPath: agentLogPath(dir, "a", "J1", 0, "analyze", "anthropic", "claude-opus-4-5"),
+            },
+          },
+        ],
+      },
+    ],
+  })
+
+  const logDir = runLogsDir(dir, "a", "J1", 0)
+  await mkdir(logDir, { recursive: true })
+  await writeFile(agentLogPath(dir, "a", "J1", 0, "analyze", "anthropic", "claude-opus-4-5"), logContent)
+
+  const dash = startDashboard({
+    port: 0,
+    host: "127.0.0.1",
+    registry,
+    queue,
+    events,
+    stateDir: dir,
+  })
+
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${dash.port}/api/flows/a/jobs/J1/runs/0/steps/analyze/log`,
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("application/x-ndjson")
+    const body = await res.text()
+    expect(body).toBe(logContent)
+  } finally {
+    await dash.stop()
+  }
+})
+
+test("GET …/runs/:runId/steps/:step/log returns 404 when step has no agent", async () => {
+  const registry = createFlowRegistry()
+  registry.register(flow("a"))
+  const queue = createJobQueue({ globalLimit: 1 })
+  const events = createEventBus()
+
+  await saveState(join(dir, "a", "J1"), {
+    jobId: "J1",
+    flowId: "a",
+    status: "done",
+    startedAt: 1000,
+    totals: { tokens: { input: 0, output: 0 } },
+    runs: [
+      {
+        runId: 0,
+        startedAt: 1000,
+        steps: [{ name: "analyze", status: "done" }],
+      },
+    ],
+  })
+
+  const dash = startDashboard({
+    port: 0,
+    host: "127.0.0.1",
+    registry,
+    queue,
+    events,
+    stateDir: dir,
+  })
+
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${dash.port}/api/flows/a/jobs/J1/runs/0/steps/analyze/log`,
+    )
+    expect(res.status).toBe(404)
+  } finally {
+    await dash.stop()
+  }
+})
