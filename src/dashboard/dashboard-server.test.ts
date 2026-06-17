@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createEventBus } from "../events/index.ts"
 import type { Flow } from "../flows/index.ts"
 import { createFlowRegistry } from "../flows/index.ts"
 import { createJobQueue } from "../jobs/index.ts"
-import { saveState } from "../state/index.ts"
+import { agentLogPath, runLogsDir, saveState } from "../state/index.ts"
 import { createSseStream } from "./dashboard-events.ts"
 import { startDashboard } from "./dashboard-server.ts"
 
@@ -162,6 +162,119 @@ test("GET /api/unknown-endpoint returns 404", async () => {
   try {
     const res = await fetch(`http://127.0.0.1:${dash.port}/api/unknown-endpoint`)
     expect(res.status).toBe(404)
+  } finally {
+    await dash.stop()
+  }
+})
+
+test("GET /api/flows/:id/jobs lists jobs filtered by status (default queued,running)", async () => {
+  const registry = createFlowRegistry()
+  registry.register(flow("a"))
+  const queue = createJobQueue({ globalLimit: 1 })
+  const events = createEventBus()
+
+  await saveState(join(dir, "a", "J1"), {
+    jobId: "J1",
+    flowId: "a",
+    status: "running",
+    startedAt: 1000,
+    totals: { tokens: { input: 0, output: 0 } },
+    runs: [],
+  })
+  await saveState(join(dir, "a", "J2"), {
+    jobId: "J2",
+    flowId: "a",
+    status: "done",
+    startedAt: 2000,
+    endedAt: 3000,
+    totals: { tokens: { input: 0, output: 0 } },
+    runs: [],
+  })
+
+  const dash = startDashboard({
+    port: 0,
+    host: "127.0.0.1",
+    registry,
+    queue,
+    events,
+    stateDir: dir,
+  })
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${dash.port}/api/flows/a/jobs`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { jobId: string; status: string }[]
+    expect(body.length).toBe(1)
+    expect(body[0].jobId).toBe("J1")
+    expect(body[0].status).toBe("running")
+  } finally {
+    await dash.stop()
+  }
+})
+
+test("GET /api/flows/:id/jobs respects ?status and ?limit/?offset", async () => {
+  const registry = createFlowRegistry()
+  registry.register(flow("a"))
+  const queue = createJobQueue({ globalLimit: 1 })
+  const events = createEventBus()
+
+  for (const [id, startedAt] of [["J1", 1000], ["J2", 2000], ["J3", 3000]] as [string, number][]) {
+    await saveState(join(dir, "a", id), {
+      jobId: id,
+      flowId: "a",
+      status: "done",
+      startedAt,
+      endedAt: startedAt + 500,
+      totals: { tokens: { input: 0, output: 0 } },
+      runs: [],
+    })
+  }
+
+  const dash = startDashboard({
+    port: 0,
+    host: "127.0.0.1",
+    registry,
+    queue,
+    events,
+    stateDir: dir,
+  })
+
+  try {
+    const res1 = await fetch(
+      `http://127.0.0.1:${dash.port}/api/flows/a/jobs?status=done&limit=2&offset=0`,
+    )
+    const page1 = (await res1.json()) as { jobId: string }[]
+    expect(page1.map((j) => j.jobId)).toEqual(["J3", "J2"])
+
+    const res2 = await fetch(
+      `http://127.0.0.1:${dash.port}/api/flows/a/jobs?status=done&limit=2&offset=2`,
+    )
+    const page2 = (await res2.json()) as { jobId: string }[]
+    expect(page2.map((j) => j.jobId)).toEqual(["J1"])
+  } finally {
+    await dash.stop()
+  }
+})
+
+test("GET /api/flows/:id/jobs returns [] for an unknown flow", async () => {
+  const registry = createFlowRegistry()
+  const queue = createJobQueue({ globalLimit: 1 })
+  const events = createEventBus()
+
+  const dash = startDashboard({
+    port: 0,
+    host: "127.0.0.1",
+    registry,
+    queue,
+    events,
+    stateDir: dir,
+  })
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${dash.port}/api/flows/no-such-flow/jobs`)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toEqual([])
   } finally {
     await dash.stop()
   }
