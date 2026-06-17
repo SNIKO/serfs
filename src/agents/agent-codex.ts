@@ -562,7 +562,7 @@ function mapUsageToStats(usage: Usage, state: RunState): AgentEvent {
     output,
     total: input + output,
     cachedInput: usage.cached_input_tokens,
-    reasoningOutput: usage.reasoning_output_tokens,
+    reasoningOutput: (usage as Record<string, number | undefined>).reasoning_output_tokens,
   }
   return { type: "stats.updated", timestamp: Date.now(), data: state.stats }
 }

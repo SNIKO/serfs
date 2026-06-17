@@ -219,7 +219,11 @@ test("GET /api/flows/:id/jobs respects ?status and ?limit/?offset", async () => 
   const queue = createJobQueue({ globalLimit: 1 })
   const events = createEventBus()
 
-  for (const [id, startedAt] of [["J1", 1000], ["J2", 2000], ["J3", 3000]] as [string, number][]) {
+  for (const [id, startedAt] of [
+    ["J1", 1000],
+    ["J2", 2000],
+    ["J3", 3000],
+  ] as [string, number][]) {
     await saveState(join(dir, "a", id), {
       jobId: id,
       flowId: "a",
@@ -318,7 +322,10 @@ test("GET …/runs/:runId/steps/:step/log returns NDJSON from the agent log file
 
   const logDir = runLogsDir(dir, "a", "J1", 0)
   await mkdir(logDir, { recursive: true })
-  await writeFile(agentLogPath(dir, "a", "J1", 0, "analyze", "anthropic", "claude-opus-4-5"), logContent)
+  await writeFile(
+    agentLogPath(dir, "a", "J1", 0, "analyze", "anthropic", "claude-opus-4-5"),
+    logContent,
+  )
 
   const dash = startDashboard({
     port: 0,
@@ -415,7 +422,7 @@ test("GET /api/events suppresses agent.event frames where inner type is raw", as
     step: "s",
     provider: "anthropic",
     model: "claude-opus-4-5",
-    event: { type: "raw", data: {} } as any,
+    event: { type: "raw", timestamp: Date.now(), provider: "claude", data: {} },
   })
 
   // Emit a non-raw event — should appear
