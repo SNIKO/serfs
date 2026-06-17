@@ -1,6 +1,8 @@
-import { readFile } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
+import { join } from "node:path"
 import type { FlowRegistry } from "../flows/index.ts"
 import type { JobQueue } from "../jobs/index.ts"
+import type { JobState } from "../jobs/job.types.ts"
 import { agentLogPath, jobDir as buildJobDir, loadState } from "../state/index.ts"
 
 export interface DashboardDeps {
@@ -27,11 +29,35 @@ export async function handleApi(
 
   const flowsList = path.match(/^\/api\/flows\/([^/]+)\/jobs$/)
   if (method === "GET" && flowsList) {
-    return json({
-      flowId: flowsList[1],
-      note: "listing requires walking stateDir; v1 returns []",
-      jobs: [],
-    })
+    const flowId = flowsList[1]
+    const statuses = (req.query.status ?? "queued,running").split(",").map((s) => s.trim())
+    const limit = Math.min(Number(req.query.limit ?? 50), 200)
+    const offset = Number(req.query.offset ?? 0)
+
+    let jobIds: string[]
+    try {
+      jobIds = await readdir(join(deps.stateDir, flowId))
+    } catch {
+      return json([])
+    }
+
+    const states = (
+      await Promise.all(jobIds.map((jobId) => loadState(buildJobDir(deps.stateDir, flowId, jobId))))
+    ).filter((s): s is JobState => s !== null)
+
+    const page = states
+      .filter((s) => statuses.includes(s.status))
+      .sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt))
+      .slice(offset, offset + limit)
+      .map((s) => ({
+        jobId: s.jobId,
+        flowId: s.flowId,
+        status: s.status,
+        startedAt: s.startedAt,
+        totals: s.totals,
+      }))
+
+    return json(page)
   }
 
   const detail = path.match(/^\/api\/flows\/([^/]+)\/jobs\/([^/]+)$/)
