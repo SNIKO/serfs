@@ -143,6 +143,7 @@ test("GET /api/events returns a text/event-stream response", () => {
   const res = createSseStream({ events })
   expect(res.status).toBe(200)
   expect(res.headers.get("content-type")).toContain("text/event-stream")
+  expect(res.headers.get("x-accel-buffering")).toBe("no")
   res.body?.cancel()
 })
 
@@ -379,4 +380,62 @@ test("GET …/runs/:runId/steps/:step/log returns 404 when step has no agent", a
   } finally {
     await dash.stop()
   }
+})
+
+test("GET /api/events sends stream.ready as first frame", async () => {
+  const events = createEventBus()
+  const res = createSseStream({ events })
+
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+
+  const { value } = await reader.read()
+  const text = decoder.decode(value)
+  expect(text).toBe('data: {"type":"stream.ready"}\n\n')
+
+  reader.cancel()
+})
+
+test("GET /api/events suppresses agent.event frames where inner type is raw", async () => {
+  const bus = createEventBus()
+  const res = createSseStream({ events: bus })
+
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+
+  // Consume the initial stream.ready frame
+  await reader.read()
+
+  // Emit a raw event — should be suppressed
+  bus.emit({
+    type: "agent.event",
+    flowId: "a",
+    jobId: "J1",
+    runId: 0,
+    step: "s",
+    provider: "anthropic",
+    model: "claude-opus-4-5",
+    event: { type: "raw", data: {} } as any,
+  })
+
+  // Emit a non-raw event — should appear
+  bus.emit({
+    type: "job.queued",
+    flowId: "a",
+    jobId: "J1",
+    at: 1000,
+  })
+
+  // Give the stream a tick to flush
+  await new Promise((r) => setTimeout(r, 10))
+
+  // Read one chunk — should be job.queued, not the raw event
+  const chunks: string[] = []
+  const { value, done } = await reader.read()
+  if (!done && value) chunks.push(decoder.decode(value))
+
+  reader.cancel()
+
+  expect(chunks.length).toBe(1)
+  expect(chunks[0]).toContain('"type":"job.queued"')
 })
