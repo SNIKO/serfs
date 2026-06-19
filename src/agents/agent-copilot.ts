@@ -1,5 +1,4 @@
 import {
-  approveAll,
   CopilotClient,
   type MCPServerConfig as CopilotMcpServerConfig,
   type PermissionHandler,
@@ -545,8 +544,14 @@ const formatParseError = (error: Error): AgentEvent =>
 // COPILOT AGENT
 // ============================================
 
+// approveAll from @github/copilot-sdk returns { kind: "approved" } but the CLI's Ej()
+// only handles "approve-once" / "approve-for-session" / "approve-for-location" — passing
+// "approved" hits the default case and throws "unexpected user permission response".
+// Using "approve-once" matches what the CLI interactive prompt layer expects.
+const approveOnce = (() => ({ kind: "approve-once" })) as unknown as PermissionHandler
+
 function getPermissionHandler(config: CopilotAgentConfig): PermissionHandler {
-  return config.providerOptions?.onPermissionRequest ?? approveAll
+  return config.providerOptions?.onPermissionRequest ?? approveOnce
 }
 
 function translateMcpServers(
@@ -558,16 +563,18 @@ function translateMcpServers(
 
   const translatedServers: Record<string, CopilotMcpServerConfig> = {}
   for (const [name, server] of Object.entries(servers)) {
+    if (!server.enabled) continue
     translatedServers[name] = translateMcpServer(server)
   }
-  return translatedServers
+  return Object.keys(translatedServers).length > 0 ? translatedServers : undefined
 }
 
 function translateMcpServer(server: McpServerConfig): CopilotMcpServerConfig {
+  const tools = server.tools
   if ("url" in server) {
-    return server
+    return { type: server.type, url: server.url, headers: server.headers, tools }
   }
-  return { ...server, args: server.args ?? [] }
+  return { command: server.command, args: server.args ?? [], env: server.env, tools }
 }
 
 export function createCopilotAgent(config: CopilotAgentConfig): Agent {
@@ -601,6 +608,7 @@ export function createCopilotAgent(config: CopilotAgentConfig): Agent {
         workingDirectory: config.cwd,
         streaming: options?.streaming ?? false,
         mcpServers: translateMcpServers(config.mcpServers),
+        ...(config.skillDirectories && { skillDirectories: config.skillDirectories }),
       })
 
       const prompt = buildPrompt(options)

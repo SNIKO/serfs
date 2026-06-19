@@ -58,6 +58,7 @@ export interface CodexAgentConfig extends BaseAgentConfig {
 
 export interface CopilotAgentConfig extends BaseAgentConfig {
   provider: "copilot"
+  skillDirectories?: string[]
   providerOptions?: CopilotProviderOptions
 }
 

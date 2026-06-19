@@ -1,6 +1,5 @@
 import {
   Codex,
-  type CodexOptions,
   type ThreadOptions as CodexThreadOptions,
   type TurnOptions as CodexTurnOptions,
   type McpToolCallItem,
@@ -63,7 +62,14 @@ interface CodexRunContext {
 
 export function createCodexAgent(config: CodexAgentConfig): Agent {
   const providerOptions: CodexProviderOptions = config.providerOptions ?? {}
-  const codexClient = new Codex(buildCodexClientOptions(config, providerOptions))
+  const shellPath = config.env?.PATH ?? providerOptions.env?.PATH ?? process.env.PATH
+  const codexConfig = buildCodexConfig(providerOptions.config, config.mcpServers, shellPath)
+  const codexOptions: CodexProviderOptions = {
+    ...providerOptions,
+    env: buildCodexEnv(config.env, providerOptions.env),
+    config: hasObjectKeys(codexConfig) ? codexConfig : undefined,
+  }
+  const codexClient = new Codex(codexOptions)
 
   return {
     provider: config.provider,
@@ -591,20 +597,6 @@ const formatParseError = (error: Error): AgentEvent =>
 
 // Codex configuration
 
-function buildCodexClientOptions(
-  config: CodexAgentConfig,
-  providerOptions: CodexProviderOptions,
-): CodexOptions {
-  const codexConfig = buildCodexConfig(providerOptions.config, config.mcpServers)
-  return {
-    apiKey: providerOptions.apiKey,
-    baseUrl: providerOptions.baseUrl,
-    codexPathOverride: providerOptions.codexPathOverride,
-    env: buildCodexEnv(config.env, providerOptions.env),
-    config: hasObjectKeys(codexConfig) ? codexConfig : undefined,
-  }
-}
-
 function buildCodexEnv(
   configEnv?: Record<string, string>,
   providerEnv?: Record<string, string>,
@@ -628,29 +620,44 @@ function getProcessEnv(): Record<string, string> {
 
 function buildCodexThreadOptions(config: CodexAgentConfig): CodexThreadOptions {
   return {
-    model: config.model ?? config.providerOptions?.model,
+    ...config.providerOptions,
+    model: config.model,
     workingDirectory: config.cwd ?? config.providerOptions?.workingDirectory,
-    skipGitRepoCheck: config.providerOptions?.skipGitRepoCheck,
-    modelReasoningEffort: config.providerOptions?.modelReasoningEffort,
-    networkAccessEnabled: config.providerOptions?.networkAccessEnabled,
-    webSearchMode: config.providerOptions?.webSearchMode,
-    webSearchEnabled: config.providerOptions?.webSearchEnabled,
-    approvalPolicy: config.providerOptions?.approvalPolicy,
-    sandboxMode: config.providerOptions?.sandboxMode,
-    additionalDirectories: config.providerOptions?.additionalDirectories,
   }
 }
 
 function buildCodexConfig(
   providerConfig?: CodexConfigObject,
   mcpServers?: Record<string, McpServerConfig>,
+  shellPath?: string,
 ): CodexConfigObject {
-  const codexConfig: CodexConfigObject = { ...(providerConfig ?? {}) }
+  const codexConfig: CodexConfigObject = {
+    ...(providerConfig ?? {}),
+    approvals_reviewer: providerConfig?.approvals_reviewer ?? "auto_review",
+  }
+
+  if (shellPath) {
+    codexConfig.shell_environment_policy = buildShellEnvironmentPolicy(
+      providerConfig?.shell_environment_policy,
+      shellPath,
+    )
+  }
+
   if (mcpServers) {
-    codexConfig.mcp_servers = translateMcpServers(mcpServers)
+    codexConfig.mcp_servers = providerConfig?.mcp_servers ?? translateMcpServers(mcpServers)
   }
 
   return codexConfig
+}
+
+function buildShellEnvironmentPolicy(
+  providerPolicy: CodexConfigValue | undefined,
+  shellPath: string,
+): CodexConfigObject {
+  const policy = isCodexConfigObject(providerPolicy) ? { ...providerPolicy } : {}
+  const providerSet = policy.set
+  const set = isCodexConfigObject(providerSet) ? providerSet : {}
+  return { ...policy, set: { PATH: shellPath, ...set } }
 }
 
 function translateMcpServers(mcpServers?: Record<string, McpServerConfig>): CodexConfigObject {
@@ -839,6 +846,10 @@ function isUrl(value: unknown): boolean {
   } catch {
     return false
   }
+}
+
+function isCodexConfigObject(value: CodexConfigValue | undefined): value is CodexConfigObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function hasObjectKeys(value: CodexConfigObject): boolean {

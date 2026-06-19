@@ -1,6 +1,13 @@
 import { join } from "node:path"
 import type { z } from "zod"
-import type { AgentEvent, McpServerConfig, Provider } from "../agents/index.ts"
+import type {
+  AgentConfig,
+  AgentEvent,
+  CodexProviderOptions,
+  CopilotProviderOptions,
+  McpServerConfig,
+  Provider,
+} from "../agents/index.ts"
 import { createAgent } from "../agents/index.ts"
 import type { EventBus } from "../events/index.ts"
 import type { JobState, StepState } from "../jobs/job.types.ts"
@@ -13,12 +20,28 @@ export interface RunAgentStepArgs<T> {
   name: string
   template: string
   vars: Record<string, string>
-  options: {
-    provider?: string
-    model?: string
-    schema?: z.ZodSchema<T>
-    mcpServers?: Record<string, McpServerConfig>
-  }
+  options:
+    | {
+        provider: "codex"
+        model?: string
+        schema?: z.ZodSchema<T>
+        mcpServers?: Record<string, McpServerConfig>
+        providerOptions?: CodexProviderOptions
+      }
+    | {
+        provider: "copilot"
+        model?: string
+        schema?: z.ZodSchema<T>
+        mcpServers?: Record<string, McpServerConfig>
+        providerOptions?: CopilotProviderOptions
+      }
+    | {
+        provider?: string
+        model?: string
+        schema?: z.ZodSchema<T>
+        mcpServers?: Record<string, McpServerConfig>
+        providerOptions?: never
+      }
   state: JobState
   flowId: string
   jobId: string
@@ -109,7 +132,8 @@ async function executeAgent<T>(args: RunAgentStepArgs<T>, step: StepState): Prom
     model,
     cwd: args.workspaceDir,
     mcpServers: args.options.mcpServers,
-  })
+    providerOptions: args.options.providerOptions,
+  } as AgentConfig)
   const handle = agent.run({
     messages: [{ role: "user", content: body }],
     abortSignal: args.signal,

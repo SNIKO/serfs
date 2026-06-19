@@ -1,5 +1,9 @@
 import type { z } from "zod"
-import type { McpServerConfig } from "../agents/index.ts"
+import type {
+  CodexProviderOptions,
+  CopilotProviderOptions,
+  McpServerConfig,
+} from "../agents/index.ts"
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "stopped"
 
@@ -44,14 +48,18 @@ export interface JobState {
   runs: RunState[]
 }
 
-export interface AgentStepOptions<T> {
+type BaseAgentStepOptions<T> = {
   stepId?: string
-  provider?: string
   model?: string
   schema?: z.ZodSchema<T>
   vars?: Record<string, string>
   mcpServers?: Record<string, McpServerConfig>
 }
+
+export type AgentStepOptions<T> =
+  | (BaseAgentStepOptions<T> & { provider: "codex"; providerOptions?: CodexProviderOptions })
+  | (BaseAgentStepOptions<T> & { provider: "copilot"; providerOptions?: CopilotProviderOptions })
+  | (BaseAgentStepOptions<T> & { provider?: string; providerOptions?: never })
 
 export interface JobContext {
   jobId: string
