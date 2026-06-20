@@ -1,14 +1,12 @@
 import { readdir, readFile } from "node:fs/promises"
-import { join } from "node:path"
 import type { FlowRegistry } from "../flows/index.ts"
 import type { JobQueue } from "../jobs/index.ts"
 import type { JobState } from "../jobs/job.types.ts"
-import { agentLogPath, jobDir as buildJobDir, loadState } from "../state/index.ts"
+import { agentLogPath, jobDir as buildJobDir, flowJobsDir, loadState } from "../state/index.ts"
 
 export interface DashboardDeps {
   registry: FlowRegistry
   queue: JobQueue<unknown>
-  stateDir: string
 }
 
 export interface DashboardRequest {
@@ -36,13 +34,13 @@ export async function handleApi(
 
     let jobIds: string[]
     try {
-      jobIds = await readdir(join(deps.stateDir, flowId))
+      jobIds = await readdir(flowJobsDir(flowId))
     } catch {
       return json([])
     }
 
     const states = (
-      await Promise.all(jobIds.map((jobId) => loadState(buildJobDir(deps.stateDir, flowId, jobId))))
+      await Promise.all(jobIds.map((jobId) => loadState(buildJobDir(flowId, jobId))))
     ).filter((s): s is JobState => s !== null)
 
     const page = states
@@ -63,7 +61,7 @@ export async function handleApi(
   const detail = path.match(/^\/api\/flows\/([^/]+)\/jobs\/([^/]+)$/)
   if (method === "GET" && detail) {
     const [, flowId, jobId] = detail
-    const state = await loadState(buildJobDir(deps.stateDir, flowId, jobId))
+    const state = await loadState(buildJobDir(flowId, jobId))
     if (!state) return notFound()
     return json(state)
   }
@@ -80,13 +78,12 @@ export async function handleApi(
   )
   if (method === "GET" && logRoute) {
     const [, flowId, jobId, runIdStr, step] = logRoute
-    const state = await loadState(buildJobDir(deps.stateDir, flowId, jobId))
+    const state = await loadState(buildJobDir(flowId, jobId))
     if (!state) return notFound()
     const runId = Number(runIdStr)
     const stepState = state.runs[runId]?.steps.find((s) => s.name === step)
     if (!stepState?.agent) return notFound()
     const fullPath = agentLogPath(
-      deps.stateDir,
       flowId,
       jobId,
       runId,

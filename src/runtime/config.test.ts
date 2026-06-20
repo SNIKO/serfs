@@ -14,30 +14,18 @@ const flow = (id: string): Flow =>
 
 test("returns normalized config when valid", () => {
   const cfg = validateConfig({
-    stateDir: "/tmp/s",
     maxConcurrentJobs: 4,
     flows: [flow("a")],
   })
-  expect(cfg.stateDir).toBe("/tmp/s")
   expect(cfg.maxConcurrentJobs).toBe(4)
   expect(cfg.flows).toHaveLength(1)
   expect(cfg.dashboard.enabled).toBe(true)
   expect(cfg.dashboard.port).toBe(4000)
 })
 
-test("throws when stateDir is missing", () => {
-  expect(() =>
-    validateConfig({
-      maxConcurrentJobs: 1,
-      flows: [flow("a")],
-    } as never),
-  ).toThrow(/stateDir/)
-})
-
 test("throws when maxConcurrentJobs is non-positive", () => {
   expect(() =>
     validateConfig({
-      stateDir: "/tmp",
       maxConcurrentJobs: 0,
       flows: [flow("a")],
     }),
@@ -47,7 +35,6 @@ test("throws when maxConcurrentJobs is non-positive", () => {
 test("throws on duplicate flow ids", () => {
   expect(() =>
     validateConfig({
-      stateDir: "/tmp",
       maxConcurrentJobs: 1,
       flows: [flow("a"), flow("a")],
     }),
@@ -57,7 +44,6 @@ test("throws on duplicate flow ids", () => {
 test("throws when no flows are registered", () => {
   expect(() =>
     validateConfig({
-      stateDir: "/tmp",
       maxConcurrentJobs: 1,
       flows: [],
     }),
@@ -66,7 +52,6 @@ test("throws when no flows are registered", () => {
 
 test("dashboard.enabled=false disables dashboard", () => {
   const cfg = validateConfig({
-    stateDir: "/tmp",
     maxConcurrentJobs: 1,
     flows: [flow("a")],
     dashboard: { enabled: false },

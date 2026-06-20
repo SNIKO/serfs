@@ -3,15 +3,17 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createEventBus } from "../events/index.ts"
-import { loadState } from "../state/index.ts"
+import { jobDir, loadState, setHomeDirForTest } from "../state/index.ts"
 import type { JobContext } from "./job.types.ts"
 import { runJob } from "./job-runner.ts"
 
 let dir: string
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "serfs-runner-"))
+  setHomeDirForTest(dir)
 })
 afterEach(async () => {
+  setHomeDirForTest()
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -27,7 +29,6 @@ test("happy path: status done, runs[0] has expected steps, persists state", asyn
     jobId: "j",
     payload: { x: 1 },
     workspaceDir: dir,
-    stateDir: dir,
     events: bus,
     signal: new AbortController().signal,
     run: async (_payload: unknown, ctx: JobContext) => {
@@ -37,7 +38,7 @@ test("happy path: status done, runs[0] has expected steps, persists state", asyn
   })
 
   expect(ended).toEqual(["done"])
-  const state = await loadState(join(dir, "f", "j"))
+  const state = await loadState(jobDir("f", "j", dir))
   expect(state?.status).toBe("done")
   expect(state?.runs).toHaveLength(1)
   expect(state?.runs[0].steps.map((s) => s.name)).toEqual(["a", "b"])
@@ -55,7 +56,6 @@ test("throwing run() ends job failed", async () => {
     jobId: "j",
     payload: {},
     workspaceDir: dir,
-    stateDir: dir,
     events: bus,
     signal: new AbortController().signal,
     run: async () => {
@@ -64,7 +64,7 @@ test("throwing run() ends job failed", async () => {
   })
 
   expect(ended).toEqual(["failed"])
-  const state = await loadState(join(dir, "f", "j"))
+  const state = await loadState(jobDir("f", "j", dir))
   expect(state?.status).toBe("failed")
 })
 
@@ -81,7 +81,6 @@ test("aborted signal during run ends job stopped", async () => {
     jobId: "j",
     payload: {},
     workspaceDir: dir,
-    stateDir: dir,
     events: bus,
     signal: ctrl.signal,
     run: async (_p, ctx) => {
@@ -91,7 +90,7 @@ test("aborted signal during run ends job stopped", async () => {
   })
 
   expect(ended).toEqual(["stopped"])
-  const state = await loadState(join(dir, "f", "j"))
+  const state = await loadState(jobDir("f", "j", dir))
   expect(state?.status).toBe("stopped")
 })
 
@@ -103,7 +102,6 @@ test("second run on existing state appends a new RunState (id increments)", asyn
     jobId: "j",
     payload: {},
     workspaceDir: dir,
-    stateDir: dir,
     events: bus,
     signal: new AbortController().signal,
     run: async (_p, ctx) => {
@@ -116,7 +114,6 @@ test("second run on existing state appends a new RunState (id increments)", asyn
     jobId: "j",
     payload: {},
     workspaceDir: dir,
-    stateDir: dir,
     events: bus,
     signal: new AbortController().signal,
     run: async (_p, ctx) => {
@@ -124,7 +121,7 @@ test("second run on existing state appends a new RunState (id increments)", asyn
     },
   })
 
-  const state = await loadState(join(dir, "f", "j"))
+  const state = await loadState(jobDir("f", "j", dir))
   expect(state?.runs).toHaveLength(2)
   expect(state?.runs[1].runId).toBe(1)
 })
@@ -139,7 +136,6 @@ test("job.start is emitted before job.end", async () => {
     jobId: "j",
     payload: {},
     workspaceDir: dir,
-    stateDir: dir,
     events: bus,
     signal: new AbortController().signal,
     run: async () => {},
@@ -161,7 +157,6 @@ test("failed job captures error message in state and job.end event", async () =>
     jobId: "j",
     payload: {},
     workspaceDir: dir,
-    stateDir: dir,
     events: bus,
     signal: new AbortController().signal,
     run: async () => {
@@ -169,7 +164,7 @@ test("failed job captures error message in state and job.end event", async () =>
     },
   })
 
-  const state = await loadState(join(dir, "f", "j"))
+  const state = await loadState(jobDir("f", "j", dir))
   expect(state?.error).toBe("nope")
   expect(endEvents[0].error).toBe("nope")
 })

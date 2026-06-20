@@ -3,13 +3,16 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Flow } from "../flows/index.ts"
+import { setHomeDirForTest } from "../state/index.ts"
 import { createSerfs } from "./serfs.ts"
 
 let dir: string
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "serfs-runtime-"))
+  setHomeDirForTest(dir)
 })
 afterEach(async () => {
+  setHomeDirForTest()
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -28,7 +31,6 @@ function eagerFlow(jobId: string): Flow<{ id: string }> {
 
 test("start/stop lifecycle: throws on bad config; processes one job end-to-end", async () => {
   const serfs = createSerfs({
-    stateDir: dir,
     maxConcurrentJobs: 1,
     flows: [eagerFlow("J1")],
     dashboard: { enabled: false },
@@ -55,11 +57,10 @@ test("start/stop lifecycle: throws on bad config; processes one job end-to-end",
 test("invalid config throws synchronously from createSerfs", () => {
   expect(() =>
     createSerfs({
-      stateDir: "",
-      maxConcurrentJobs: 1,
+      maxConcurrentJobs: 0,
       flows: [eagerFlow("J")],
     } as never),
-  ).toThrow(/stateDir/)
+  ).toThrow(/maxConcurrentJobs/)
 })
 
 test("stopJob aborts the running job before the next step", async () => {
@@ -79,7 +80,6 @@ test("stopJob aborts the running job before the next step", async () => {
   }
 
   const serfs = createSerfs({
-    stateDir: dir,
     maxConcurrentJobs: 1,
     flows: [stopFlow],
     dashboard: { enabled: false },

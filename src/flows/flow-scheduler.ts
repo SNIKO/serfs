@@ -9,7 +9,6 @@ export interface FlowSchedulerArgs<TJob> {
   flow: Flow<TJob>
   queue: JobQueue<TJob>
   events: EventBus
-  stateDir?: string
   sleep?: (ms: number) => Promise<void>
 }
 
@@ -39,14 +38,14 @@ export function startFlowScheduler<TJob>(args: FlowSchedulerArgs<TJob>): () => v
 }
 
 async function pollOnce<TJob>(args: FlowSchedulerArgs<TJob>): Promise<void> {
-  const { flow, queue, events, stateDir } = args
+  const { flow, queue, events } = args
   const jobs = await flow.fetchJobs()
 
   for (const job of jobs) {
     const jobId = flow.getJobId(job)
     if (queue.has(flow.id, jobId)) continue
 
-    const state = stateDir ? await loadState(buildJobDir(stateDir, flow.id, jobId)) : null
+    const state = await loadState(buildJobDir(flow.id, jobId))
     const runnable = await flow.isRunnable(job, state)
     if (!runnable) {
       events.emit({

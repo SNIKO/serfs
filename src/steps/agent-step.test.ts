@@ -6,6 +6,7 @@ import { z } from "zod"
 import type { AgentConfig, AgentEvent, RunHandle } from "../agents/index.ts"
 import { createEventBus } from "../events/index.ts"
 import type { JobState } from "../jobs/job.types.ts"
+import { setHomeDirForTest } from "../state/index.ts"
 import { createAsyncQueue } from "../utils/asyncQueue.ts"
 import { runAgentStep } from "./agent-step.ts"
 
@@ -21,8 +22,10 @@ let dir: string
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "serfs-agentstep-"))
+  setHomeDirForTest(dir)
 })
 afterEach(async () => {
+  setHomeDirForTest()
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -90,7 +93,6 @@ test("uses agent config, writes NDJSON, emits agent.event, returns string output
     flowId: "f",
     jobId: "j",
     runId: 0,
-    stateDir: dir,
     workspaceDir: dir,
     events: bus,
     signal: new AbortController().signal,
@@ -133,7 +135,6 @@ test("uses call-site agent config", async () => {
     flowId: "f",
     jobId: "j",
     runId: 0,
-    stateDir: dir,
     workspaceDir: dir,
     events: createEventBus(),
     signal: new AbortController().signal,
@@ -164,7 +165,6 @@ test("missing variable fails the step", async () => {
       flowId: "f",
       jobId: "j",
       runId: 0,
-      stateDir: dir,
       workspaceDir: dir,
       events: createEventBus(),
       signal: new AbortController().signal,
@@ -195,7 +195,6 @@ test("schema validates output and returns typed result", async () => {
     flowId: "f",
     jobId: "j",
     runId: 0,
-    stateDir: dir,
     workspaceDir: dir,
     events: createEventBus(),
     signal: new AbortController().signal,
@@ -204,7 +203,7 @@ test("schema validates output and returns typed result", async () => {
   expect(result).toEqual({ approved: true })
 })
 
-test("provides built-in vars (JOB_DIR, WORKSPACE_DIR, FLOW_ID, JOB_ID, TODAY)", async () => {
+test("provides built-in vars (WORKSPACE_DIR, FLOW_ID, JOB_ID, RUN_ID, TODAY)", async () => {
   let renderedBody = ""
   const factory = mock(() => ({
     provider: "p",
@@ -225,23 +224,22 @@ test("provides built-in vars (JOB_DIR, WORKSPACE_DIR, FLOW_ID, JOB_ID, TODAY)", 
 
   await runAgentStep({
     name: "x",
-    template: "{{JOB_DIR}}|{{WORKSPACE_DIR}}|{{FLOW_ID}}|{{JOB_ID}}|{{TODAY}}",
+    template: "{{WORKSPACE_DIR}}|{{FLOW_ID}}|{{JOB_ID}}|{{RUN_ID}}|{{TODAY}}",
     vars: {},
     options: { agent: { provider: "copilot", model: "m" } },
     state: jobState(),
     flowId: "F",
     jobId: "J",
     runId: 0,
-    stateDir: dir,
     workspaceDir: "/ws",
     events: createEventBus(),
     signal: new AbortController().signal,
   })
 
-  expect(renderedBody).toContain(join(dir, "F", "J"))
   expect(renderedBody).toContain("/ws")
   expect(renderedBody).toContain("F")
   expect(renderedBody).toContain("J")
+  expect(renderedBody).toContain("0")
 })
 
 test("pre-aborted signal fails the step without calling the agent", async () => {
@@ -261,7 +259,6 @@ test("pre-aborted signal fails the step without calling the agent", async () => 
       flowId: "f",
       jobId: "j",
       runId: 0,
-      stateDir: dir,
       workspaceDir: dir,
       events: createEventBus(),
       signal: ctrl.signal,
@@ -301,7 +298,6 @@ test("agent output rejection ends step failed and rethrows the error", async () 
       flowId: "f",
       jobId: "j",
       runId: 0,
-      stateDir: dir,
       workspaceDir: dir,
       events: createEventBus(),
       signal: new AbortController().signal,

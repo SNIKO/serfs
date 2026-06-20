@@ -6,7 +6,6 @@ export interface BuildJobContextArgs {
   flowId: string
   jobId: string
   runId: number
-  stateDir: string
   workspaceDir: string
   state: JobState
   signal: AbortSignal
@@ -14,22 +13,18 @@ export interface BuildJobContextArgs {
 }
 
 export function buildJobContext(args: BuildJobContextArgs): JobContext {
-  const jobDirPath = `${args.stateDir}/${args.flowId}/${args.jobId}`
-
   return {
     jobId: args.jobId,
     flowId: args.flowId,
     runId: args.runId,
     workspaceDir: args.workspaceDir,
-    jobDir: jobDirPath,
-    state: args.state,
+    history: args.state,
 
     step(name, fn) {
       return runCodeStep({
         name,
         fn,
         state: args.state,
-        jobDir: jobDirPath,
         flowId: args.flowId,
         jobId: args.jobId,
         runId: args.runId,
@@ -48,7 +43,6 @@ export function buildJobContext(args: BuildJobContextArgs): JobContext {
         flowId: args.flowId,
         jobId: args.jobId,
         runId: args.runId,
-        stateDir: args.stateDir,
         workspaceDir: args.workspaceDir,
         events: args.events,
         signal: args.signal,

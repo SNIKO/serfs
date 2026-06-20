@@ -27,9 +27,7 @@ export function createSerfs(input: CreateSerfsArgs): Serfs {
 
   return {
     async start() {
-      stopFlows = config.flows.map((flow) =>
-        startFlowScheduler({ flow, queue, events, stateDir: config.stateDir }),
-      )
+      stopFlows = config.flows.map((flow) => startFlowScheduler({ flow, queue, events }))
       pumpStopped = false
       void runJobPump({
         config,
@@ -45,7 +43,6 @@ export function createSerfs(input: CreateSerfsArgs): Serfs {
           registry,
           queue,
           events,
-          stateDir: config.stateDir,
         })
       }
     },
@@ -98,8 +95,7 @@ async function runJobPump(p: PumpArgs): Promise<void> {
           flowId: flow.id,
           jobId: next.entry.jobId,
           payload: next.entry.payload,
-          workspaceDir: flow.config.workspaceDir,
-          stateDir: p.config.stateDir,
+          workspaceDir: flow.config.workspaceDir ?? process.cwd(),
           events: p.events,
           signal: next.handle.signal,
           run: (payload, ctx) => flow.run(payload, ctx),

@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { createEventBus } from "../events/index.ts"
 import { createJobQueue } from "../jobs/index.ts"
 import type { JobState } from "../jobs/job.types.ts"
-import { saveState } from "../state/index.ts"
+import { jobDir, saveState, setHomeDirForTest } from "../state/index.ts"
 import type { Flow } from "./flow.types.ts"
 import { startFlowScheduler } from "./flow-scheduler.ts"
 
@@ -22,6 +22,7 @@ function fakeClock(): { sleep: (ms: number) => Promise<void>; tick: Tick } {
       }),
     tick: {
       async fire() {
+        while (!resolveCurrent) await new Promise((resolve) => setTimeout(resolve, 0))
         resolveCurrent?.()
         resolveCurrent = null
         await Promise.resolve()
@@ -72,7 +73,12 @@ test("does not re-enqueue jobs already queued or running", async () => {
   const bus = createEventBus()
   const queue = createJobQueue<unknown>({ globalLimit: 10 })
   const clock = fakeClock()
-  const stop = startFlowScheduler({ flow: makeFlow(["a"]), queue, events: bus, sleep: clock.sleep })
+  const stop = startFlowScheduler({
+    flow: makeFlow(["a"]),
+    queue,
+    events: bus,
+    sleep: clock.sleep,
+  })
 
   await clock.tick.fire()
   await Promise.resolve()
@@ -119,7 +125,12 @@ test("flow with enabled=false does not poll", async () => {
     isRunnable: async () => true,
     run: async () => {},
   }
-  const stop = startFlowScheduler({ flow, queue, events: bus, sleep: () => Promise.resolve() })
+  const stop = startFlowScheduler({
+    flow,
+    queue,
+    events: bus,
+    sleep: () => Promise.resolve(),
+  })
   await Promise.resolve()
   expect(fetchJobs).not.toHaveBeenCalled()
   stop()
@@ -155,8 +166,9 @@ test("fetchJobs error is swallowed and the scheduler retries on the next poll", 
   errorSpy.mockRestore()
 })
 
-test("passes loaded state to isRunnable when stateDir is provided and a state file exists", async () => {
+test("passes loaded state to isRunnable when a state file exists", async () => {
   const tmpDir = await mkdtemp(join(tmpdir(), "serfs-sched-"))
+  setHomeDirForTest(tmpDir)
   try {
     const bus = createEventBus()
     const queue = createJobQueue<unknown>({ globalLimit: 10 })
@@ -170,7 +182,7 @@ test("passes loaded state to isRunnable when stateDir is provided and a state fi
       totals: { tokens: { input: 0, output: 0 } },
       runs: [],
     }
-    await saveState(join(tmpDir, "f", "a"), existingState)
+    await saveState(jobDir("f", "a", tmpDir), existingState)
 
     // Use a latch so the test waits for isRunnable to be called regardless of I/O timing
     let resolveReceived!: (s: JobState | null) => void
@@ -188,7 +200,6 @@ test("passes loaded state to isRunnable when stateDir is provided and a state fi
       queue,
       events: bus,
       sleep: clock.sleep,
-      stateDir: tmpDir,
     })
 
     const receivedState = await receivedPromise
@@ -198,6 +209,7 @@ test("passes loaded state to isRunnable when stateDir is provided and a state fi
     expect((receivedState as JobState).jobId).toBe("a")
     expect((receivedState as JobState).status).toBe("done")
   } finally {
+    setHomeDirForTest()
     await rm(tmpDir, { recursive: true, force: true })
   }
 })

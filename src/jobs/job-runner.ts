@@ -8,14 +8,13 @@ export interface RunJobArgs<TPayload> {
   jobId: string
   payload: TPayload
   workspaceDir: string
-  stateDir: string
   events: EventBus
   signal: AbortSignal
   run: (payload: TPayload, ctx: JobContext) => Promise<void>
 }
 
 export async function runJob<TPayload>(args: RunJobArgs<TPayload>): Promise<void> {
-  const dir = buildJobDir(args.stateDir, args.flowId, args.jobId)
+  const dir = buildJobDir(args.flowId, args.jobId)
   const state = await initState(dir, args)
   const runId = state.runs[state.runs.length - 1].runId
 
@@ -31,7 +30,6 @@ export async function runJob<TPayload>(args: RunJobArgs<TPayload>): Promise<void
     flowId: args.flowId,
     jobId: args.jobId,
     runId,
-    stateDir: args.stateDir,
     workspaceDir: args.workspaceDir,
     state,
     signal: args.signal,

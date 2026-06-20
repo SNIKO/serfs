@@ -6,15 +6,17 @@ import { createEventBus } from "../events/index.ts"
 import type { Flow } from "../flows/index.ts"
 import { createFlowRegistry } from "../flows/index.ts"
 import { createJobQueue } from "../jobs/index.ts"
-import { agentLogPath, runLogsDir, saveState } from "../state/index.ts"
+import { agentLogPath, jobDir, runLogsDir, saveState, setHomeDirForTest } from "../state/index.ts"
 import { createSseStream } from "./dashboard-events.ts"
 import { startDashboard } from "./dashboard-server.ts"
 
 let dir: string
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "serfs-dash-"))
+  setHomeDirForTest(dir)
 })
 afterEach(async () => {
+  setHomeDirForTest()
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -38,7 +40,6 @@ test("GET / serves the SPA placeholder", async () => {
     registry,
     queue,
     events,
-    stateDir: dir,
   })
 
   try {
@@ -63,7 +64,6 @@ test("GET /api/flows returns registered flows", async () => {
     registry,
     queue,
     events,
-    stateDir: dir,
   })
 
   try {
@@ -81,7 +81,7 @@ test("GET /api/flows/:id/jobs/:jobId returns the persisted job state", async () 
   const queue = createJobQueue({ globalLimit: 1 })
   const events = createEventBus()
 
-  await saveState(join(dir, "a", "J1"), {
+  await saveState(jobDir("a", "J1", dir), {
     jobId: "J1",
     flowId: "a",
     status: "done",
@@ -96,7 +96,6 @@ test("GET /api/flows/:id/jobs/:jobId returns the persisted job state", async () 
     registry,
     queue,
     events,
-    stateDir: dir,
   })
 
   try {
@@ -124,7 +123,6 @@ test("POST /api/flows/:id/jobs/:jobId/stop returns 204 and aborts the job signal
     registry,
     queue,
     events,
-    stateDir: dir,
   })
 
   try {
@@ -157,7 +155,6 @@ test("GET /api/unknown-endpoint returns 404", async () => {
     registry,
     queue,
     events,
-    stateDir: dir,
   })
 
   try {
@@ -174,7 +171,7 @@ test("GET /api/flows/:id/jobs lists jobs filtered by status (default queued,runn
   const queue = createJobQueue({ globalLimit: 1 })
   const events = createEventBus()
 
-  await saveState(join(dir, "a", "J1"), {
+  await saveState(jobDir("a", "J1", dir), {
     jobId: "J1",
     flowId: "a",
     status: "running",
@@ -182,7 +179,7 @@ test("GET /api/flows/:id/jobs lists jobs filtered by status (default queued,runn
     totals: { tokens: { input: 0, output: 0 } },
     runs: [],
   })
-  await saveState(join(dir, "a", "J2"), {
+  await saveState(jobDir("a", "J2", dir), {
     jobId: "J2",
     flowId: "a",
     status: "done",
@@ -198,7 +195,6 @@ test("GET /api/flows/:id/jobs lists jobs filtered by status (default queued,runn
     registry,
     queue,
     events,
-    stateDir: dir,
   })
 
   try {
@@ -224,7 +220,7 @@ test("GET /api/flows/:id/jobs respects ?status and ?limit/?offset", async () => 
     ["J2", 2000],
     ["J3", 3000],
   ] as [string, number][]) {
-    await saveState(join(dir, "a", id), {
+    await saveState(jobDir("a", id, dir), {
       jobId: id,
       flowId: "a",
       status: "done",
@@ -241,7 +237,6 @@ test("GET /api/flows/:id/jobs respects ?status and ?limit/?offset", async () => 
     registry,
     queue,
     events,
-    stateDir: dir,
   })
 
   try {
@@ -272,7 +267,6 @@ test("GET /api/flows/:id/jobs returns [] for an unknown flow", async () => {
     registry,
     queue,
     events,
-    stateDir: dir,
   })
 
   try {
@@ -293,7 +287,7 @@ test("GET …/runs/:runId/steps/:step/log returns NDJSON from the agent log file
 
   const logContent = '{"type":"text_delta","delta":"hello"}\n'
 
-  await saveState(join(dir, "a", "J1"), {
+  await saveState(jobDir("a", "J1", dir), {
     jobId: "J1",
     flowId: "a",
     status: "done",
@@ -312,7 +306,7 @@ test("GET …/runs/:runId/steps/:step/log returns NDJSON from the agent log file
               model: "claude-opus-4-5",
               tokens: { input: 100, output: 50 },
               toolCalls: 0,
-              logPath: agentLogPath(dir, "a", "J1", 0, "analyze", "anthropic", "claude-opus-4-5"),
+              logPath: agentLogPath("a", "J1", 0, "analyze", "anthropic", "claude-opus-4-5", dir),
             },
           },
         ],
@@ -320,10 +314,10 @@ test("GET …/runs/:runId/steps/:step/log returns NDJSON from the agent log file
     ],
   })
 
-  const logDir = runLogsDir(dir, "a", "J1", 0)
+  const logDir = runLogsDir("a", "J1", 0, dir)
   await mkdir(logDir, { recursive: true })
   await writeFile(
-    agentLogPath(dir, "a", "J1", 0, "analyze", "anthropic", "claude-opus-4-5"),
+    agentLogPath("a", "J1", 0, "analyze", "anthropic", "claude-opus-4-5", dir),
     logContent,
   )
 
@@ -333,7 +327,6 @@ test("GET …/runs/:runId/steps/:step/log returns NDJSON from the agent log file
     registry,
     queue,
     events,
-    stateDir: dir,
   })
 
   try {
@@ -355,7 +348,7 @@ test("GET …/runs/:runId/steps/:step/log returns 404 when step has no agent", a
   const queue = createJobQueue({ globalLimit: 1 })
   const events = createEventBus()
 
-  await saveState(join(dir, "a", "J1"), {
+  await saveState(jobDir("a", "J1", dir), {
     jobId: "J1",
     flowId: "a",
     status: "done",
@@ -376,7 +369,6 @@ test("GET …/runs/:runId/steps/:step/log returns 404 when step has no agent", a
     registry,
     queue,
     events,
-    stateDir: dir,
   })
 
   try {

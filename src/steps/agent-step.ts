@@ -1,4 +1,3 @@
-import { join } from "node:path"
 import type { z } from "zod"
 import type { AgentConfig, AgentEvent } from "../agents/index.ts"
 import { createAgent } from "../agents/index.ts"
@@ -21,7 +20,6 @@ export interface RunAgentStepArgs<T> {
   flowId: string
   jobId: string
   runId: number
-  stateDir: string
   workspaceDir: string
   events: EventBus
   signal: AbortSignal
@@ -33,18 +31,18 @@ export async function runAgentStep<T = string>(args: RunAgentStepArgs<T>): Promi
 
   if (signal.aborted) {
     finalizeStep(step, { status: "failed", endedAt: Date.now(), error: "aborted" })
-    await saveState(buildJobDir(args.stateDir, flowId, jobId), state)
+    await saveState(buildJobDir(flowId, jobId), state)
     throw new Error("Agent step aborted before start")
   }
 
   startStep(step, Date.now())
-  await saveState(buildJobDir(args.stateDir, flowId, jobId), state)
+  await saveState(buildJobDir(flowId, jobId), state)
   events.emit({ type: "step.start", flowId, jobId, runId, step: name, at: step.startedAt ?? 0 })
 
   try {
     const result = await executeAgent(args, step)
     finalizeStep(step, { status: "done", endedAt: Date.now() })
-    await saveState(buildJobDir(args.stateDir, flowId, jobId), state)
+    await saveState(buildJobDir(flowId, jobId), state)
     events.emit({
       type: "step.end",
       flowId,
@@ -58,7 +56,7 @@ export async function runAgentStep<T = string>(args: RunAgentStepArgs<T>): Promi
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     finalizeStep(step, { status: "failed", endedAt: Date.now(), error: message })
-    await saveState(buildJobDir(args.stateDir, flowId, jobId), state)
+    await saveState(buildJobDir(flowId, jobId), state)
     events.emit({
       type: "step.end",
       flowId,
@@ -81,21 +79,13 @@ async function executeAgent<T>(args: RunAgentStepArgs<T>, step: StepState): Prom
   const builtins = builtinVars({
     flowId: args.flowId,
     jobId: args.jobId,
-    stateDir: args.stateDir,
+    runId: args.runId,
     workspaceDir: args.workspaceDir,
   })
   const allVars = { ...builtins, ...args.vars }
   const body = renderPrompt(parsed, allVars)
 
-  const logPath = agentLogPath(
-    args.stateDir,
-    args.flowId,
-    args.jobId,
-    args.runId,
-    args.name,
-    provider,
-    model,
-  )
+  const logPath = agentLogPath(args.flowId, args.jobId, args.runId, args.name, provider, model)
   const log = await createAgentLog(logPath)
 
   applyAgentStats(args.state, step, { provider, model, logPath })
@@ -148,14 +138,14 @@ function applyStatsEvent(
 function builtinVars(args: {
   flowId: string
   jobId: string
-  stateDir: string
+  runId: number
   workspaceDir: string
 }): Record<string, string> {
   return {
-    JOB_DIR: join(args.stateDir, args.flowId, args.jobId),
     WORKSPACE_DIR: args.workspaceDir,
     FLOW_ID: args.flowId,
     JOB_ID: args.jobId,
+    RUN_ID: String(args.runId),
     TODAY: new Date().toISOString().slice(0, 10),
   }
 }

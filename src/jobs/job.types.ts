@@ -56,8 +56,7 @@ export interface JobContext {
   flowId: string
   runId: number
   workspaceDir: string
-  jobDir: string
-  state: JobState
+  history: JobState
 
   step(name: string, fn: () => Promise<void>): Promise<void>
   agent<T = string>(promptTemplate: string, options: AgentStepOptions<T>): Promise<T>

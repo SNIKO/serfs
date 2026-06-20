@@ -1,14 +1,12 @@
 import type { Flow } from "../flows/index.ts"
 
 export interface SerfsConfigInput {
-  stateDir: string
   maxConcurrentJobs: number
   flows: Flow[]
   dashboard?: { enabled?: boolean; port?: number; host?: string }
 }
 
 export interface SerfsConfig {
-  stateDir: string
   maxConcurrentJobs: number
   flows: Flow[]
   dashboard: { enabled: boolean; port: number; host: string }
@@ -18,9 +16,6 @@ export const DEFAULT_DASHBOARD_PORT = 4000
 export const DEFAULT_DASHBOARD_HOST = "127.0.0.1"
 
 export function validateConfig(input: SerfsConfigInput): SerfsConfig {
-  if (!input.stateDir || typeof input.stateDir !== "string") {
-    throw new Error("Serfs config: stateDir is required and must be a string")
-  }
   if (!Number.isInteger(input.maxConcurrentJobs) || input.maxConcurrentJobs < 1) {
     throw new Error("Serfs config: maxConcurrentJobs must be a positive integer")
   }
@@ -33,13 +28,9 @@ export function validateConfig(input: SerfsConfigInput): SerfsConfig {
     if (!flow.id) throw new Error("Serfs config: flow.id is required")
     if (ids.has(flow.id)) throw new Error(`Serfs config: duplicate flow id "${flow.id}"`)
     ids.add(flow.id)
-    if (!flow.config?.workspaceDir) {
-      throw new Error(`Serfs config: flow "${flow.id}" is missing config.workspaceDir`)
-    }
   }
 
   return {
-    stateDir: input.stateDir,
     maxConcurrentJobs: input.maxConcurrentJobs,
     flows: input.flows,
     dashboard: {

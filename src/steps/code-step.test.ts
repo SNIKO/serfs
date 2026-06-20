@@ -4,15 +4,17 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createEventBus } from "../events/index.ts"
 import type { JobState } from "../jobs/job.types.ts"
-import { loadState } from "../state/index.ts"
+import { jobDir, loadState, setHomeDirForTest } from "../state/index.ts"
 import { runCodeStep } from "./code-step.ts"
 
 let dir: string
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "serfs-codestep-"))
+  setHomeDirForTest(dir)
 })
 afterEach(async () => {
+  setHomeDirForTest()
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -38,7 +40,6 @@ test("happy path: emits step.start, runs fn, emits step.end status=done, persist
     name: "send",
     fn,
     state,
-    jobDir: dir,
     flowId: "f",
     jobId: "j",
     runId: 0,
@@ -60,7 +61,6 @@ test("fn throws: step ends failed and the error propagates", async () => {
       name: "send",
       fn: () => Promise.reject(new Error("kaboom")),
       state,
-      jobDir: dir,
       flowId: "f",
       jobId: "j",
       runId: 0,
@@ -85,7 +85,6 @@ test("aborts before running fn when signal already aborted", async () => {
       name: "x",
       fn,
       state,
-      jobDir: dir,
       flowId: "f",
       jobId: "j",
       runId: 0,
@@ -111,7 +110,6 @@ test("fn throws: step.end event carries failed status and error message", async 
       name: "send",
       fn: () => Promise.reject(new Error("kaboom")),
       state,
-      jobDir: dir,
       flowId: "f",
       jobId: "j",
       runId: 0,
@@ -137,7 +135,6 @@ test("abort: step state is persisted to disk as failed before throwing", async (
       name: "x",
       fn,
       state,
-      jobDir: dir,
       flowId: "f",
       jobId: "j",
       runId: 0,
@@ -146,6 +143,6 @@ test("abort: step state is persisted to disk as failed before throwing", async (
     }),
   ).rejects.toThrow()
 
-  const persisted = await loadState(dir)
+  const persisted = await loadState(jobDir("f", "j", dir))
   expect(persisted?.runs[0].steps[0].status).toBe("failed")
 })
