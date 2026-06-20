@@ -1,5 +1,5 @@
-import { createCopilotAgent } from "./agent-copilot.ts"
 import { createCodexAgent } from "./codex/index.ts"
+import { createCopilotAgent } from "./copilot/index.ts"
 import type { Agent, AgentConfig } from "./types.ts"
 
 /**

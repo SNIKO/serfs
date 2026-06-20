@@ -19,7 +19,7 @@ Read these before implementing:
 - `./types.ts` — `Agent`, `AgentConfig`, `RunOptions`, `RunHandle`, `AgentEvent`, `McpServerConfig`.
 - `./agent.ts` — `renderMessages`, `runWithEvents`, `tryParseOutput`, `stripCodeBlock`.
 - `./index.ts` — provider factory wiring.
-- Existing wrappers, especially `./codex/codex-agent.ts`, `./codex/codex-config.ts`, `./codex/codex-events.ts`, and `./agent-copilot.ts`, for local style and mapping patterns.
+- Existing wrappers, especially `./codex/codex-agent.ts`, `./codex/codex-config.ts`, `./codex/codex-events.ts`, and `./copilot/`, for local style and mapping patterns.
 
 ## Implementation rules
 
@@ -73,7 +73,7 @@ Use local `McpServerConfig` as the source shape and translate inside the wrapper
 - About CLI: https://docs.github.com/copilot/concepts/agents/about-copilot-cli
 - Usage: https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/overview
 - Docs source: https://github.com/github/docs/tree/main/content/copilot
-- Prefer `@github/copilot-sdk`; see `./agent-copilot.ts`.
+- Prefer `@github/copilot-sdk`; see `./copilot/`.
 
 ### OpenCode (`opencode`)
 - Docs: https://opencode.ai/docs/

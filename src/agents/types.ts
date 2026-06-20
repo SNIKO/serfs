@@ -1,6 +1,6 @@
 import type {
   CopilotClientOptions,
-  PermissionHandler as CopilotPermissionHandler,
+  SessionConfig as CopilotSessionConfig,
 } from "@github/copilot-sdk"
 import type { CodexOptions, ThreadOptions as CodexThreadOptions } from "@openai/codex-sdk"
 import type { z } from "zod"
@@ -40,9 +40,7 @@ export type McpServerConfig =
 
 export type CodexProviderOptions = CodexOptions & CodexThreadOptions
 
-export type CopilotProviderOptions = CopilotClientOptions & {
-  onPermissionRequest?: CopilotPermissionHandler
-}
+export type CopilotProviderOptions = CopilotClientOptions & Partial<CopilotSessionConfig>
 
 export interface BaseAgentConfig {
   model: string
@@ -58,7 +56,6 @@ export interface CodexAgentConfig extends BaseAgentConfig {
 
 export interface CopilotAgentConfig extends BaseAgentConfig {
   provider: "copilot"
-  skillDirectories?: string[]
   copilotOptions?: CopilotProviderOptions
 }
 

@@ -1,31 +1,16 @@
-import {
-  CopilotClient,
-  type MCPServerConfig as CopilotMcpServerConfig,
-  type PermissionHandler,
-  type SessionEvent,
-} from "@github/copilot-sdk"
-import { subscriptionToAsyncGenerator } from "../utils/subscription.ts"
-import { renderMessages, runWithEvents, tryParseOutput } from "./agent.ts"
+import type { SessionEvent } from "@github/copilot-sdk"
+
 import type {
-  Agent,
   AgentEvent,
   AgentStats,
-  CopilotAgentConfig,
   ErrorCode,
   FileToolCompletedDetails,
-  McpServerConfig,
   McpToolCompletedDetails,
   OtherToolCompletedDetails,
   RawEvent,
-  RunHandle,
-  RunOptions,
   ShellToolCompletedDetails,
   WebToolCompletedDetails,
-} from "./types.ts"
-
-// ============================================
-// EVENT MAPPERS
-// ============================================
+} from "../types.ts"
 
 type CopilotToolStartData = Extract<SessionEvent, { type: "tool.execution_start" }>["data"]
 type CopilotToolCompleteData = Extract<SessionEvent, { type: "tool.execution_complete" }>["data"]
@@ -37,7 +22,7 @@ type ActiveTool =
   | { toolType: "web"; details: WebToolCompletedDetails }
   | { toolType: "other"; details: OtherToolCompletedDetails }
 
-interface RunState {
+export interface RunState {
   startTime: number
   hasError: boolean
   errorMessage?: string
@@ -49,7 +34,7 @@ interface RunState {
   stats: AgentStats
 }
 
-function createRunState(): RunState {
+export function createRunState(): RunState {
   return {
     startTime: Date.now(),
     hasError: false,
@@ -61,24 +46,14 @@ function createRunState(): RunState {
   }
 }
 
-function mapCopilotEvent(event: SessionEvent, state: RunState): AgentEvent[] {
+export function mapCopilotEvent(event: SessionEvent, state: RunState): AgentEvent[] {
   const ts = Date.now()
 
   switch (event.type) {
     case "session.error":
       state.hasError = true
       state.errorMessage = event.data.message
-      return [
-        {
-          type: "error",
-          timestamp: ts,
-          data: {
-            code: "PROVIDER_ERROR" as ErrorCode,
-            message: event.data.message,
-            recoverable: false,
-          },
-        },
-      ]
+      return [createErrorEvent("PROVIDER_ERROR", event.data.message)]
 
     case "assistant.message_delta":
       if (!state.messageId) state.messageId = event.data.messageId
@@ -212,6 +187,38 @@ function mapCopilotEvent(event: SessionEvent, state: RunState): AgentEvent[] {
     default:
       return []
   }
+}
+
+export function createRawEvent(event: SessionEvent): RawEvent<SessionEvent> {
+  return {
+    type: "raw",
+    timestamp: Date.now(),
+    provider: "copilot",
+    data: event,
+  }
+}
+
+export function createErrorEvent(
+  code: ErrorCode,
+  message: string,
+  recoverable = false,
+): AgentEvent {
+  return {
+    type: "error",
+    timestamp: Date.now(),
+    data: {
+      code,
+      message,
+      recoverable,
+    },
+  }
+}
+
+export const formatParseError = (error: Error): AgentEvent =>
+  createErrorEvent("PARSE_ERROR", `Failed to parse output: ${error.message}`)
+
+export function createRunError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
 }
 
 function createToolStartedEvent(
@@ -503,169 +510,4 @@ function getFileOperationKind(toolName: string): "add" | "update" | "delete" {
 function getTerminalExitCode(data: CopilotToolCompleteData): number | null {
   const terminalContent = data.result?.contents?.find((content) => content.type === "terminal")
   return terminalContent?.exitCode ?? null
-}
-
-function createErrorEvent(code: ErrorCode, message: string): AgentEvent {
-  return {
-    type: "error",
-    timestamp: Date.now(),
-    data: {
-      code,
-      message,
-      recoverable: false,
-    },
-  }
-}
-
-// ============================================
-// RUN HELPERS
-// ============================================
-
-function buildPrompt<T>(options: RunOptions<T>): string {
-  const parts = [renderMessages(options.messages)]
-
-  if (options?.outputSchema) {
-    const schema = options.outputSchema.toJSONSchema()
-    parts.push(`<message role="user">
-You MUST reply a json string using the following schema:
-${JSON.stringify(schema, null, 2)}
-
-Do NOT use code blocks, DO NOT wrap the JSON in triple backticks or any markup, and DO NOT include any additional text, explanation or reasoning. Return only a single valid JSON string that conforms to the schema.
-</message>`)
-  }
-
-  return parts.join("\n\n")
-}
-
-const formatParseError = (error: Error): AgentEvent =>
-  createErrorEvent("PARSE_ERROR", `Failed to parse output: ${error.message}`)
-
-// ============================================
-// COPILOT AGENT
-// ============================================
-
-// approveAll from @github/copilot-sdk returns { kind: "approved" } but the CLI's Ej()
-// only handles "approve-once" / "approve-for-session" / "approve-for-location" — passing
-// "approved" hits the default case and throws "unexpected user permission response".
-// Using "approve-once" matches what the CLI interactive prompt layer expects.
-const approveOnce = (() => ({ kind: "approve-once" })) as unknown as PermissionHandler
-
-function getPermissionHandler(config: CopilotAgentConfig): PermissionHandler {
-  return config.copilotOptions?.onPermissionRequest ?? approveOnce
-}
-
-function translateMcpServers(
-  servers?: Record<string, McpServerConfig>,
-): Record<string, CopilotMcpServerConfig> | undefined {
-  if (!servers) {
-    return undefined
-  }
-
-  const translatedServers: Record<string, CopilotMcpServerConfig> = {}
-  for (const [name, server] of Object.entries(servers)) {
-    if (!server.enabled) continue
-    translatedServers[name] = translateMcpServer(server)
-  }
-  return Object.keys(translatedServers).length > 0 ? translatedServers : undefined
-}
-
-function translateMcpServer(server: McpServerConfig): CopilotMcpServerConfig {
-  const tools = server.tools
-  if ("url" in server) {
-    return { type: server.type, url: server.url, headers: server.headers, tools }
-  }
-  return { command: server.command, args: server.args ?? [], env: server.env, tools }
-}
-
-export function createCopilotAgent(config: CopilotAgentConfig): Agent {
-  const { onPermissionRequest, ...clientOptions } = config.copilotOptions ?? {}
-  const client = new CopilotClient({
-    ...clientOptions,
-    cwd: config.cwd,
-    env: config.env,
-  })
-
-  function run<T = string>(options: RunOptions<T>): RunHandle<T> {
-    const state = createRunState()
-    const { promise, resolve, reject } = Promise.withResolvers<T>()
-    const events = runSession(options, state, resolve, reject)
-
-    return runWithEvents(events, promise, reject)
-  }
-
-  async function* runSession<T>(
-    options: RunOptions<T>,
-    state: RunState,
-    resolve: (output: T) => void,
-    reject: (error: Error) => void,
-  ): AsyncGenerator<AgentEvent, void> {
-    const emitRawEvents = options?.emitRawEvents ?? false
-
-    try {
-      const session = await client.createSession({
-        model: config.model,
-        onPermissionRequest: getPermissionHandler(config),
-        workingDirectory: config.cwd,
-        streaming: options?.streaming ?? false,
-        mcpServers: translateMcpServers(config.mcpServers),
-        ...(config.skillDirectories && { skillDirectories: config.skillDirectories }),
-      })
-
-      const prompt = buildPrompt(options)
-
-      const events = subscriptionToAsyncGenerator<SessionEvent>({
-        subscribe: (listener) => session.on(listener),
-        stopWhen: (event) => event.type === "session.idle" || event.type === "session.error",
-        abortSignal: options?.abortSignal,
-        onAbort: () => session.abort(),
-      })
-
-      await session.send({ prompt })
-
-      for await (const event of events) {
-        if (emitRawEvents) {
-          const rawEvent: RawEvent<SessionEvent> = {
-            type: "raw",
-            timestamp: Date.now(),
-            provider: "copilot",
-            data: event,
-          }
-          yield rawEvent
-        }
-
-        const mapped = mapCopilotEvent(event, state)
-        for (const item of mapped) {
-          yield item
-        }
-      }
-
-      state.stats.durationMs = Date.now() - state.startTime
-      yield { type: "stats.updated", timestamp: Date.now(), data: state.stats }
-
-      if (state.hasError) {
-        const error = new Error(state.errorMessage ?? "Agent session failed with error")
-        reject(error)
-        return
-      }
-
-      const result = tryParseOutput<T>(state.messageContent, options.outputSchema, formatParseError)
-      if (!result.ok) {
-        yield result.event
-        reject(result.error)
-        return
-      }
-
-      resolve(result.output)
-    } catch (e) {
-      const error = e instanceof Error ? e : new Error(String(e))
-      yield createErrorEvent("PROVIDER_ERROR", error.message)
-      reject(error)
-    }
-  }
-
-  async function close(): Promise<void> {
-    await client.stop()
-  }
-
-  return { provider: config.provider, model: config.model, run, close }
 }
