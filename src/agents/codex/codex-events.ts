@@ -1,23 +1,11 @@
-import {
-  Codex,
-  type ThreadOptions as CodexThreadOptions,
-  type TurnOptions as CodexTurnOptions,
-  type McpToolCallItem,
-  type ThreadEvent,
-  type ThreadItem,
-  type Usage,
-} from "@openai/codex-sdk"
-import { renderMessages, runWithEvents, tryParseOutput } from "./agent.ts"
+import type { McpToolCallItem, ThreadEvent, ThreadItem, Usage } from "@openai/codex-sdk"
+
 import type {
-  Agent,
   AgentEvent,
   AgentStats,
-  CodexAgentConfig,
-  CodexProviderOptions,
   ErrorCode,
   FileToolCompletedDetails,
   FileToolStartedDetails,
-  McpServerConfig,
   McpToolCompletedDetails,
   McpToolError,
   McpToolStartedDetails,
@@ -25,25 +13,24 @@ import type {
   OtherToolProgressDetails,
   OtherToolStartedDetails,
   RawEvent,
-  RunHandle,
-  RunOptions,
   ShellToolCompletedDetails,
   ShellToolProgressDetails,
   ShellToolStartedDetails,
   WebToolDetails,
-} from "./types.ts"
-
-type CodexConfigValue = string | number | boolean | CodexConfigValue[] | CodexConfigObject
-
-type CodexConfigObject = {
-  [key: string]: CodexConfigValue
-}
+} from "../types.ts"
 
 interface ToolState {
   lastOutput: string
 }
 
-interface RunState {
+type CodexItemEvent = Extract<
+  ThreadEvent,
+  { type: "item.started" | "item.updated" | "item.completed" }
+>
+
+type ItemEventPhase = CodexItemEvent["type"]
+
+export interface RunState {
   startTime: number
   hasError: boolean
   lastErrorMessage?: string
@@ -52,44 +39,7 @@ interface RunState {
   stats: AgentStats
 }
 
-interface CodexRunContext {
-  codexClient: Codex
-  config: CodexAgentConfig
-  providerOptions: CodexProviderOptions
-}
-
-// Agent construction
-
-export function createCodexAgent(config: CodexAgentConfig): Agent {
-  const providerOptions: CodexProviderOptions = config.providerOptions ?? {}
-  const shellPath = config.env?.PATH ?? providerOptions.env?.PATH ?? process.env.PATH
-  const codexConfig = buildCodexConfig(providerOptions.config, config.mcpServers, shellPath)
-  const codexOptions: CodexProviderOptions = {
-    ...providerOptions,
-    env: buildCodexEnv(config.env, providerOptions.env),
-    config: hasObjectKeys(codexConfig) ? codexConfig : undefined,
-  }
-  const codexClient = new Codex(codexOptions)
-
-  return {
-    provider: config.provider,
-    model: config.model,
-    run: (options) => runCodexAgent(options, { codexClient, config, providerOptions }),
-    close: closeCodexAgent,
-  }
-}
-
-// Run lifecycle
-
-function runCodexAgent<T = string>(options: RunOptions<T>, context: CodexRunContext): RunHandle<T> {
-  const state = createRunState()
-  const { promise, resolve, reject } = Promise.withResolvers<T>()
-  const events = streamCodexThreadEvents(options, state, context, resolve, reject)
-
-  return runWithEvents(events, promise, reject)
-}
-
-function createRunState(): RunState {
+export function createRunState(): RunState {
   return {
     startTime: Date.now(),
     hasError: false,
@@ -100,81 +50,7 @@ function createRunState(): RunState {
   }
 }
 
-async function* streamCodexThreadEvents<T>(
-  options: RunOptions<T>,
-  state: RunState,
-  context: CodexRunContext,
-  resolve: (output: T) => void,
-  reject: (error: Error) => void,
-): AsyncGenerator<AgentEvent, void> {
-  try {
-    yield* runCodexThread(options, state, context)
-    yield* finishCodexRun(options, state, resolve, reject)
-  } catch (error) {
-    const err = createRunError(error)
-    yield createErrorEvent(getErrorCode(err), err.message, err.name === "AbortError")
-    reject(err)
-  }
-}
-
-async function* runCodexThread<T>(
-  options: RunOptions<T>,
-  state: RunState,
-  context: CodexRunContext,
-): AsyncGenerator<AgentEvent, void> {
-  const { config, codexClient } = context
-  const thread = codexClient.startThread(buildCodexThreadOptions(config))
-  const prompt = renderMessages(options.messages)
-  const { events } = await thread.runStreamed(prompt, {
-    outputSchema: options.outputSchema?.toJSONSchema(),
-    signal: options.abortSignal,
-  } satisfies CodexTurnOptions)
-
-  for await (const event of events) {
-    if (options.emitRawEvents ?? false) {
-      yield createRawEvent(event)
-    }
-
-    for (const mappedEvent of mapCodexEvent(event, state)) {
-      yield mappedEvent
-    }
-
-    if (state.hasError) {
-      throw new Error(state.lastErrorMessage ?? "Codex run failed")
-    }
-  }
-}
-
-async function* finishCodexRun<T>(
-  options: RunOptions<T>,
-  state: RunState,
-  resolve: (output: T) => void,
-  reject: (error: Error) => void,
-): AsyncGenerator<AgentEvent, void> {
-  state.stats.durationMs = Date.now() - state.startTime
-  yield { type: "stats.updated", timestamp: Date.now(), data: state.stats }
-
-  const parsedOutput = tryParseOutput<T>(
-    state.messageContent,
-    options.outputSchema,
-    formatParseError,
-  )
-  if (!parsedOutput.ok) {
-    yield parsedOutput.event
-    reject(parsedOutput.error)
-    return
-  }
-
-  resolve(parsedOutput.output)
-}
-
-function closeCodexAgent(): Promise<void> {
-  return Promise.resolve()
-}
-
-// Event mapping
-
-function mapCodexEvent(event: ThreadEvent, state: RunState): AgentEvent[] {
+export function mapCodexEvent(event: ThreadEvent, state: RunState): AgentEvent[] {
   switch (event.type) {
     case "thread.started":
     case "turn.started":
@@ -198,10 +74,39 @@ function mapCodexEvent(event: ThreadEvent, state: RunState): AgentEvent[] {
   }
 }
 
-function mapItemEvent(
-  itemEvent: Extract<ThreadEvent, { type: "item.started" | "item.updated" | "item.completed" }>,
-  state: RunState,
-): AgentEvent[] {
+export function createRawEvent(event: ThreadEvent): RawEvent<ThreadEvent> {
+  return {
+    type: "raw",
+    timestamp: Date.now(),
+    provider: "codex",
+    data: event,
+  }
+}
+
+export function createErrorEvent(
+  code: ErrorCode,
+  message: string,
+  recoverable = false,
+): AgentEvent {
+  return {
+    type: "error",
+    timestamp: Date.now(),
+    data: { code, message, recoverable },
+  }
+}
+
+export const formatParseError = (error: Error): AgentEvent =>
+  createErrorEvent("PARSE_ERROR", `Failed to parse output: ${error.message}`)
+
+export function createRunError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
+}
+
+export function getErrorCode(error: Error): ErrorCode {
+  return error.name === "AbortError" ? "ABORTED" : "PROVIDER_ERROR"
+}
+
+function mapItemEvent(itemEvent: CodexItemEvent, state: RunState): AgentEvent[] {
   const { item, type } = itemEvent
 
   switch (item.type) {
@@ -228,7 +133,7 @@ function mapItemEvent(
 
 function mapAgentMessage(
   item: Extract<ThreadItem, { type: "agent_message" }>,
-  phase: "item.started" | "item.updated" | "item.completed",
+  phase: ItemEventPhase,
   state: RunState,
 ): AgentEvent[] {
   if (phase !== "item.completed") {
@@ -250,7 +155,7 @@ function mapAgentMessage(
 
 function mapReasoning(
   item: Extract<ThreadItem, { type: "reasoning" }>,
-  phase: "item.started" | "item.updated" | "item.completed",
+  phase: ItemEventPhase,
   _state: RunState,
 ): AgentEvent[] {
   if (phase !== "item.completed") {
@@ -271,7 +176,7 @@ function mapReasoning(
 
 function mapCommandExecution(
   item: Extract<ThreadItem, { type: "command_execution" }>,
-  phase: "item.started" | "item.updated" | "item.completed",
+  phase: ItemEventPhase,
   state: RunState,
 ): AgentEvent[] {
   const events: AgentEvent[] = []
@@ -332,7 +237,7 @@ function mapCommandExecution(
 
 function mapMcpToolCall(
   item: Extract<ThreadItem, { type: "mcp_tool_call" }>,
-  phase: "item.started" | "item.updated" | "item.completed",
+  phase: ItemEventPhase,
   state: RunState,
 ): AgentEvent[] {
   const events: AgentEvent[] = []
@@ -376,7 +281,7 @@ function mapMcpToolCall(
 
 function mapFileChange(
   item: Extract<ThreadItem, { type: "file_change" }>,
-  phase: "item.started" | "item.updated" | "item.completed",
+  phase: ItemEventPhase,
   state: RunState,
 ): AgentEvent[] {
   const ts = Date.now()
@@ -426,7 +331,7 @@ function mapFileChange(
 
 function mapWebSearch(
   item: Extract<ThreadItem, { type: "web_search" }>,
-  phase: "item.started" | "item.updated" | "item.completed",
+  phase: ItemEventPhase,
   state: RunState,
 ): AgentEvent[] {
   const ts = Date.now()
@@ -466,7 +371,7 @@ function mapWebSearch(
 
 function mapTodoList(
   item: Extract<ThreadItem, { type: "todo_list" }>,
-  phase: "item.started" | "item.updated" | "item.completed",
+  phase: ItemEventPhase,
   state: RunState,
 ): AgentEvent[] {
   const summary = item.items
@@ -518,11 +423,7 @@ function mapTodoList(
   ]
 }
 
-function mapUnknownItem(
-  item: ThreadItem,
-  phase: "item.started" | "item.updated" | "item.completed",
-  state: RunState,
-): AgentEvent[] {
+function mapUnknownItem(item: ThreadItem, phase: ItemEventPhase, state: RunState): AgentEvent[] {
   const ts = Date.now()
   const details = buildUnknownDetails(item)
 
@@ -572,130 +473,6 @@ function mapUsageToStats(usage: Usage, state: RunState): AgentEvent {
   }
   return { type: "stats.updated", timestamp: Date.now(), data: state.stats }
 }
-
-// Event factories
-
-function createRawEvent(event: ThreadEvent): RawEvent<ThreadEvent> {
-  return {
-    type: "raw",
-    timestamp: Date.now(),
-    provider: "codex",
-    data: event,
-  }
-}
-
-function createErrorEvent(code: ErrorCode, message: string, recoverable = false): AgentEvent {
-  return {
-    type: "error",
-    timestamp: Date.now(),
-    data: { code, message, recoverable },
-  }
-}
-
-const formatParseError = (error: Error): AgentEvent =>
-  createErrorEvent("PARSE_ERROR", `Failed to parse output: ${error.message}`)
-
-// Codex configuration
-
-function buildCodexEnv(
-  configEnv?: Record<string, string>,
-  providerEnv?: Record<string, string>,
-): Record<string, string> | undefined {
-  if (!configEnv && !providerEnv) {
-    return undefined
-  }
-
-  return { ...getProcessEnv(), ...providerEnv, ...configEnv }
-}
-
-function getProcessEnv(): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) {
-      env[key] = value
-    }
-  }
-  return env
-}
-
-function buildCodexThreadOptions(config: CodexAgentConfig): CodexThreadOptions {
-  return {
-    ...config.providerOptions,
-    model: config.model,
-    workingDirectory: config.cwd ?? config.providerOptions?.workingDirectory,
-  }
-}
-
-function buildCodexConfig(
-  providerConfig?: CodexConfigObject,
-  mcpServers?: Record<string, McpServerConfig>,
-  shellPath?: string,
-): CodexConfigObject {
-  const codexConfig: CodexConfigObject = {
-    ...(providerConfig ?? {}),
-    approvals_reviewer: providerConfig?.approvals_reviewer ?? "auto_review",
-  }
-
-  if (shellPath) {
-    codexConfig.shell_environment_policy = buildShellEnvironmentPolicy(
-      providerConfig?.shell_environment_policy,
-      shellPath,
-    )
-  }
-
-  if (mcpServers) {
-    codexConfig.mcp_servers = providerConfig?.mcp_servers ?? translateMcpServers(mcpServers)
-  }
-
-  return codexConfig
-}
-
-function buildShellEnvironmentPolicy(
-  providerPolicy: CodexConfigValue | undefined,
-  shellPath: string,
-): CodexConfigObject {
-  const policy = isCodexConfigObject(providerPolicy) ? { ...providerPolicy } : {}
-  const providerSet = policy.set
-  const set = isCodexConfigObject(providerSet) ? providerSet : {}
-  return { ...policy, set: { PATH: shellPath, ...set } }
-}
-
-function translateMcpServers(mcpServers?: Record<string, McpServerConfig>): CodexConfigObject {
-  const codexMcpServers: CodexConfigObject = {}
-  if (!mcpServers) {
-    return codexMcpServers
-  }
-
-  for (const [name, server] of Object.entries(mcpServers)) {
-    codexMcpServers[name] = translateMcpServer(server)
-  }
-
-  return codexMcpServers
-}
-
-function translateMcpServer(server: McpServerConfig): CodexConfigObject {
-  const codexServer: CodexConfigObject = { enabled: server.enabled }
-  if ("url" in server) {
-    codexServer.url = server.url
-    if (server.headers) {
-      codexServer.http_headers = server.headers
-    }
-  } else {
-    codexServer.command = server.command
-    if (server.args) {
-      codexServer.args = server.args
-    }
-    if (server.env) {
-      codexServer.env = server.env
-    }
-  }
-  if (server.tools.length > 0) {
-    codexServer.enabled_tools = server.tools
-  }
-  return codexServer
-}
-
-// Utilities
 
 function buildShellStartedDetails(
   item: Extract<ThreadItem, { type: "command_execution" }>,
@@ -786,14 +563,6 @@ function buildTodoCompletedDetails(
   }
 }
 
-function getWebSearchAction(item: Extract<ThreadItem, { type: "web_search" }>): unknown {
-  // Confirmed exists based on raw events, but not typed in SDK
-  if ("action" in item) {
-    return item.action
-  }
-  return { type: "other" }
-}
-
 function buildUnknownDetails(
   item: ThreadItem,
 ): OtherToolStartedDetails & OtherToolCompletedDetails {
@@ -803,12 +572,11 @@ function buildUnknownDetails(
   }
 }
 
-function createRunError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
-}
-
-function getErrorCode(error: Error): ErrorCode {
-  return error.name === "AbortError" ? "ABORTED" : "PROVIDER_ERROR"
+function getWebSearchAction(item: Extract<ThreadItem, { type: "web_search" }>): unknown {
+  if ("action" in item) {
+    return item.action
+  }
+  return { type: "other" }
 }
 
 function createToolState(): ToolState {
@@ -846,12 +614,4 @@ function isUrl(value: unknown): boolean {
   } catch {
     return false
   }
-}
-
-function isCodexConfigObject(value: CodexConfigValue | undefined): value is CodexConfigObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function hasObjectKeys(value: CodexConfigObject): boolean {
-  return Object.keys(value).length > 0
 }

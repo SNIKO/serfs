@@ -1,13 +1,6 @@
 import { join } from "node:path"
 import type { z } from "zod"
-import type {
-  AgentConfig,
-  AgentEvent,
-  CodexProviderOptions,
-  CopilotProviderOptions,
-  McpServerConfig,
-  Provider,
-} from "../agents/index.ts"
+import type { AgentConfig, AgentEvent } from "../agents/index.ts"
 import { createAgent } from "../agents/index.ts"
 import type { EventBus } from "../events/index.ts"
 import type { JobState, StepState } from "../jobs/job.types.ts"
@@ -20,28 +13,10 @@ export interface RunAgentStepArgs<T> {
   name: string
   template: string
   vars: Record<string, string>
-  options:
-    | {
-        provider: "codex"
-        model?: string
-        schema?: z.ZodSchema<T>
-        mcpServers?: Record<string, McpServerConfig>
-        providerOptions?: CodexProviderOptions
-      }
-    | {
-        provider: "copilot"
-        model?: string
-        schema?: z.ZodSchema<T>
-        mcpServers?: Record<string, McpServerConfig>
-        providerOptions?: CopilotProviderOptions
-      }
-    | {
-        provider?: string
-        model?: string
-        schema?: z.ZodSchema<T>
-        mcpServers?: Record<string, McpServerConfig>
-        providerOptions?: never
-      }
+  options: {
+    agent: AgentConfig
+    schema?: z.ZodSchema<T>
+  }
   state: JobState
   flowId: string
   jobId: string
@@ -100,10 +75,8 @@ export async function runAgentStep<T = string>(args: RunAgentStepArgs<T>): Promi
 
 async function executeAgent<T>(args: RunAgentStepArgs<T>, step: StepState): Promise<T> {
   const parsed = parsePrompt(args.template)
-  const provider = args.options.provider ?? parsed.frontmatter.provider
-  const model = args.options.model ?? parsed.frontmatter.model
-  if (!provider) throw new Error(`Agent step "${args.name}": no provider in frontmatter or options`)
-  if (!model) throw new Error(`Agent step "${args.name}": no model in frontmatter or options`)
+  const agentConfig = args.options.agent
+  const { provider, model } = agentConfig
 
   const builtins = builtinVars({
     flowId: args.flowId,
@@ -127,13 +100,7 @@ async function executeAgent<T>(args: RunAgentStepArgs<T>, step: StepState): Prom
 
   applyAgentStats(args.state, step, { provider, model, logPath })
 
-  const agent = createAgent({
-    provider: provider as Provider,
-    model,
-    cwd: args.workspaceDir,
-    mcpServers: args.options.mcpServers,
-    providerOptions: args.options.providerOptions,
-  } as AgentConfig)
+  const agent = createAgent({ ...agentConfig, cwd: agentConfig.cwd ?? args.workspaceDir })
   const handle = agent.run({
     messages: [{ role: "user", content: body }],
     abortSignal: args.signal,

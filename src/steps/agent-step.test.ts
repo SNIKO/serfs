@@ -45,7 +45,7 @@ interface FakeAgentArgs {
 }
 
 function makeFakeAgentFactory(args: FakeAgentArgs) {
-  return mock((cfg: { provider: string; model: string }) => {
+  return mock((cfg: AgentConfig) => {
     return {
       provider: cfg.provider,
       model: cfg.model,
@@ -64,7 +64,7 @@ function makeFakeAgentFactory(args: FakeAgentArgs) {
   })
 }
 
-test("renders frontmatter provider/model, writes NDJSON, emits agent.event, returns string output", async () => {
+test("uses agent config, writes NDJSON, emits agent.event, returns string output", async () => {
   const bus = createEventBus()
   const seenAgentEvents: string[] = []
   bus.on("agent.event", (e) => seenAgentEvents.push(e.type))
@@ -83,13 +83,9 @@ test("renders frontmatter provider/model, writes NDJSON, emits agent.event, retu
 
   const result = await runAgentStep({
     name: "investigate",
-    template: `---
-provider: copilot
-model: gpt-5.2
----
-Investigate {{INCIDENT_ID}}.`,
+    template: "Investigate {{INCIDENT_ID}}.",
     vars: { INCIDENT_ID: "INC-1" },
-    options: {},
+    options: { agent: { provider: "copilot", model: "gpt-5.2" } },
     state,
     flowId: "f",
     jobId: "j",
@@ -102,7 +98,7 @@ Investigate {{INCIDENT_ID}}.`,
 
   expect(result).toBe("Done.")
   expect(factory).toHaveBeenCalledWith(
-    expect.objectContaining({ provider: "copilot", model: "gpt-5.2", cwd: dir }),
+    expect.objectContaining({ provider: "copilot", model: "gpt-5.2" }),
   )
 
   const step = state.runs[0].steps[0]
@@ -116,20 +112,23 @@ Investigate {{INCIDENT_ID}}.`,
   expect(log.trim().split("\n")).toHaveLength(2)
 })
 
-test("call-site provider/model overrides frontmatter", async () => {
+test("uses call-site agent config", async () => {
   const factory = makeFakeAgentFactory({ events: [], output: "ok" })
   activeFactory = factory
   const state = jobState()
 
   await runAgentStep({
     name: "step",
-    template: `---
-provider: copilot
-model: a
----
-hi`,
+    template: "hi",
     vars: {},
-    options: { provider: "codex", model: "gpt-5-codex" },
+    options: {
+      agent: {
+        provider: "codex",
+        model: "gpt-5-codex",
+        cwd: dir,
+        codexOptions: { sandboxMode: "workspace-write" },
+      },
+    },
     state,
     flowId: "f",
     jobId: "j",
@@ -141,7 +140,12 @@ hi`,
   })
 
   expect(factory).toHaveBeenCalledWith(
-    expect.objectContaining({ provider: "codex", model: "gpt-5-codex" }),
+    expect.objectContaining({
+      provider: "codex",
+      model: "gpt-5-codex",
+      cwd: dir,
+      codexOptions: { sandboxMode: "workspace-write" },
+    }),
   )
 })
 
@@ -153,9 +157,9 @@ test("missing variable fails the step", async () => {
   await expect(
     runAgentStep({
       name: "x",
-      template: "---\nprovider: copilot\nmodel: m\n---\n{{MISSING}}",
+      template: "{{MISSING}}",
       vars: {},
-      options: {},
+      options: { agent: { provider: "copilot", model: "m" } },
       state,
       flowId: "f",
       jobId: "j",
@@ -181,9 +185,12 @@ test("schema validates output and returns typed result", async () => {
 
   const result = await runAgentStep<{ approved: boolean }>({
     name: "review",
-    template: "---\nprovider: copilot\nmodel: m\n---\nreview",
+    template: "review",
     vars: {},
-    options: { schema: z.object({ approved: z.boolean() }) },
+    options: {
+      agent: { provider: "copilot", model: "m" },
+      schema: z.object({ approved: z.boolean() }),
+    },
     state,
     flowId: "f",
     jobId: "j",
@@ -218,10 +225,9 @@ test("provides built-in vars (JOB_DIR, WORKSPACE_DIR, FLOW_ID, JOB_ID, TODAY)", 
 
   await runAgentStep({
     name: "x",
-    template:
-      "---\nprovider: p\nmodel: m\n---\n{{JOB_DIR}}|{{WORKSPACE_DIR}}|{{FLOW_ID}}|{{JOB_ID}}|{{TODAY}}",
+    template: "{{JOB_DIR}}|{{WORKSPACE_DIR}}|{{FLOW_ID}}|{{JOB_ID}}|{{TODAY}}",
     vars: {},
-    options: {},
+    options: { agent: { provider: "copilot", model: "m" } },
     state: jobState(),
     flowId: "F",
     jobId: "J",
@@ -248,9 +254,9 @@ test("pre-aborted signal fails the step without calling the agent", async () => 
   await expect(
     runAgentStep({
       name: "x",
-      template: "---\nprovider: p\nmodel: m\n---\nhi",
+      template: "hi",
       vars: {},
-      options: {},
+      options: { agent: { provider: "copilot", model: "m" } },
       state,
       flowId: "f",
       jobId: "j",
@@ -288,9 +294,9 @@ test("agent output rejection ends step failed and rethrows the error", async () 
   await expect(
     runAgentStep({
       name: "x",
-      template: "---\nprovider: p\nmodel: m\n---\nhi",
+      template: "hi",
       vars: {},
-      options: {},
+      options: { agent: { provider: "copilot", model: "m" } },
       state,
       flowId: "f",
       jobId: "j",

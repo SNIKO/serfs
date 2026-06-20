@@ -6,3 +6,5 @@ dist/
 scripts/demo.ts
 .codex/
 agent-events.jsonl
+.tmp
+.superpowers

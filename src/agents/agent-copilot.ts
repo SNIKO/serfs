@@ -551,7 +551,7 @@ const formatParseError = (error: Error): AgentEvent =>
 const approveOnce = (() => ({ kind: "approve-once" })) as unknown as PermissionHandler
 
 function getPermissionHandler(config: CopilotAgentConfig): PermissionHandler {
-  return config.providerOptions?.onPermissionRequest ?? approveOnce
+  return config.copilotOptions?.onPermissionRequest ?? approveOnce
 }
 
 function translateMcpServers(
@@ -578,7 +578,7 @@ function translateMcpServer(server: McpServerConfig): CopilotMcpServerConfig {
 }
 
 export function createCopilotAgent(config: CopilotAgentConfig): Agent {
-  const { onPermissionRequest, ...clientOptions } = config.providerOptions ?? {}
+  const { onPermissionRequest, ...clientOptions } = config.copilotOptions ?? {}
   const client = new CopilotClient({
     ...clientOptions,
     cwd: config.cwd,

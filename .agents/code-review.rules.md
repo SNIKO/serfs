@@ -14,3 +14,4 @@
 - Security
 - Performance
 - `/scripts` - scripts for local testing
+- backwards compatibility, we don't care about breaking changes at this stage

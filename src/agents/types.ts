@@ -53,23 +53,23 @@ export interface BaseAgentConfig {
 
 export interface CodexAgentConfig extends BaseAgentConfig {
   provider: "codex"
-  providerOptions?: CodexProviderOptions
+  codexOptions?: CodexProviderOptions
 }
 
 export interface CopilotAgentConfig extends BaseAgentConfig {
   provider: "copilot"
   skillDirectories?: string[]
-  providerOptions?: CopilotProviderOptions
+  copilotOptions?: CopilotProviderOptions
 }
 
 export interface OpenCodeAgentConfig extends BaseAgentConfig {
   provider: "opencode"
-  providerOptions?: never
+  opencodeOptions?: never
 }
 
 export interface ClaudeAgentConfig extends BaseAgentConfig {
   provider: "claude"
-  providerOptions?: never
+  claudeOptions?: never
 }
 
 export type AgentConfig =

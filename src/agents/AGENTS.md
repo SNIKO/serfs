@@ -19,7 +19,7 @@ Read these before implementing:
 - `./types.ts` — `Agent`, `AgentConfig`, `RunOptions`, `RunHandle`, `AgentEvent`, `McpServerConfig`.
 - `./agent.ts` — `renderMessages`, `runWithEvents`, `tryParseOutput`, `stripCodeBlock`.
 - `./index.ts` — provider factory wiring.
-- Existing wrappers, especially `./agent-codex.ts` and `./agent-copilot.ts`, for local style and mapping patterns.
+- Existing wrappers, especially `./codex/codex-agent.ts`, `./codex/codex-config.ts`, `./codex/codex-events.ts`, and `./agent-copilot.ts`, for local style and mapping patterns.
 
 ## Implementation rules
 
@@ -60,7 +60,7 @@ Use local `McpServerConfig` as the source shape and translate inside the wrapper
 - Repo: https://github.com/openai/codex
 - Non-interactive docs: https://developers.openai.com/codex/noninteractive
 - CLI exec docs: https://openai-codex.mintlify.app/cli/exec
-- Prefer `@openai/codex-sdk`; see `./agent-codex.ts`.
+- Prefer `@openai/codex-sdk`; see `./codex/codex-agent.ts`, `./codex/codex-config.ts`, and `./codex/codex-events.ts`.
 
 ### Claude Code (`claude`)
 - Headless / Agent SDK: https://code.claude.com/docs/en/headless

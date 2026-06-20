@@ -38,12 +38,12 @@ export function buildJobContext(args: BuildJobContextArgs): JobContext {
       })
     },
 
-    agent<T = string>(template: string, options?: AgentStepOptions<T>) {
+    agent<T = string>(template: string, options: AgentStepOptions<T>) {
       return runAgentStep<T>({
-        name: options?.stepId ?? "agent",
+        name: options.stepId ?? "agent",
         template,
-        vars: options?.vars ?? {},
-        options: options ?? {},
+        vars: options.vars ?? {},
+        options,
         state: args.state,
         flowId: args.flowId,
         jobId: args.jobId,
