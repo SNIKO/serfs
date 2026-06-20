@@ -13,11 +13,11 @@ export function setHomeDirForTest(homeDir?: string): void {
 }
 
 export function flowJobsDir(flowId: string, homeDir = defaultHomeDir()): string {
-  return join(homeDir, "flows", pathSegment(flowId), "jobs")
+  return join(homeDir, "flows", pathSegment(flowId))
 }
 
 export function jobDir(flowId: string, jobId: string, homeDir = defaultHomeDir()): string {
-  return join(homeDir, "flows", pathSegment(flowId), "jobs", pathSegment(jobId))
+  return join(homeDir, "flows", pathSegment(flowId), pathSegment(jobId))
 }
 
 export function jobStatePath(flowId: string, jobId: string, homeDir = defaultHomeDir()): string {
